@@ -62,14 +62,15 @@
 - `deploy` job 절차: `create-github-app-token` → gitops checkout → `kustomize edit set image ghcr.io/devpathai/devpath-<svc>=ghcr.io/devpathai/devpath-<svc>:${{ github.sha }}` (apps/<svc>/base) → `git commit -m "deploy(<svc>): <sha>"` → `git push`(실패 시 `git pull --rebase` 후 재시도, 동시 push 충돌 대비).
 - **GitHub App**: org `DevPathAi`에 App 생성, `contents: write`(gitops 레포 한정), 서비스 레포에 설치. `APP_ID`·`APP_PRIVATE_KEY`는 org/레포 secret.
 
-### 4.3 frontend (web + admin)
-- devpath-frontend는 모노레포(`web`·`admin`=Vite+TS, `mobile`=Flutter). **신규** `ci.yml` 하나에서 web·admin을 **matrix**로 처리.
-- 각 앱(web·admin): **신규** multi-stage Dockerfile(`node:lts`에서 `npm ci && npm run build` → `nginx:alpine`에 `dist/` 복사 + SPA fallback `nginx.conf`, port 80).
-- CI(앱별): `npm ci`(`<app>/`) → `npm run build` → docker build → ghcr push(`:<sha>`,`:main`) → gitops set image.
-  - 이미지명: web=`ghcr.io/devpathai/devpath-frontend`, admin=`ghcr.io/devpathai/devpath-frontend-admin`.
-- **web**: 기존 `apps/devpath-frontend` deployment의 `:latest`를 kustomize `images:` SHA 참조로 정리.
-- **admin**: gitops에 deployment 부재 → **`apps/devpath-frontend-admin/base/`(deployment+service+kustomization) 신설**(web과 동일 구조: nginx, port 80). ApplicationSet이 자동 발견·배포.
+### 4.3 frontend (web + admin) — 실제 구현 반영(2026-06-13)
+- devpath-frontend는 모노레포(`web`·`admin`=React19+Vite+TS, `mobile`=Flutter). **신규** `ci.yml`에서 앱별 job 분리(`build-web`/`build-admin`, `web-image`/`web-deploy`, `admin-image`/`admin-deploy`).
+- 각 앱(web·admin): **신규** multi-stage Dockerfile — `node:22-alpine`에서 `npm ci && npm run build` → **`nginxinc/nginx-unprivileged:1.27-alpine`**에 `dist/` 복사 + SPA fallback `nginx.conf`. **port 8080**(non-root nginx; Service가 80→8080 매핑).
+- **이미지명: web=`ghcr.io/devpathai/devpath-web`, admin=`ghcr.io/devpathai/devpath-admin`**.
+- **web**: gitops `apps/devpath-frontend` → **`apps/devpath-web`로 rename**, image를 kustomize `images:` SHA 참조로(Service port 80→targetPort 8080).
+- **admin**: **`apps/devpath-admin/base/`(deployment+service+kustomization) 신설**(nginx, containerPort 8080). ApplicationSet 자동 발견·배포.
 - **mobile(Flutter) 제외**(앱스토어 배포 경로).
+
+> **네이밍 결정(2026-06-13)**: 모노레포 web/admin 대칭상 당초 `devpath-frontend`/`devpath-frontend-admin`에서 **`devpath-web`/`devpath-admin`으로 변경**. nginx는 보안상 non-root unprivileged 이미지(8080) 사용. ⚠️ 레포명(`devpath-frontend`)과 gitops 디렉토리명(`devpath-web`/`devpath-admin`)이 불일치하나, 모노레포라 의도된 분리다.
 
 ### 4.4 migration 전용 이미지
 - devpath-shared에 **신규** `Dockerfile.migration`(또는 `migration/Dockerfile`): `FROM flyway/flyway:11-alpine` + `COPY src/main/resources/db/migration /flyway/sql`.
