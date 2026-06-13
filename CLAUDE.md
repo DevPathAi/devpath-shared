@@ -24,7 +24,7 @@
 
 - 빌드: `./gradlew build`  / 테스트: `./gradlew test` (JUnit 5)
 - 스택: Java 21 · Gradle (Kotlin DSL) · `java-library`
-- 로컬 인프라: `docker compose up -d` (MySQL 8 / Redis 7 / pgvector / Elasticsearch / Kafka)
+- 로컬 인프라: `docker compose up -d` (PostgreSQL 17 / Redis 7 / pgvector / Elasticsearch / Kafka)
 
 ## 이벤트 추가 규칙
 

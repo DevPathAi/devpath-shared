@@ -7,7 +7,7 @@
 | 영역 | 내용 |
 |------|------|
 | `src/main/java/ai/devpath/shared/event` | Kafka(Outbox)로 발행되는 도메인 이벤트 스키마 |
-| `docker-compose.yml` | 로컬 개발 인프라 (MySQL 8, Redis 7, pgvector, Elasticsearch, Kafka KRaft) |
+| `docker-compose.yml` | 로컬 개발 인프라 (PostgreSQL 17, Redis 7, pgvector, Elasticsearch, Kafka KRaft) |
 
 - Java 21 · Gradle (Kotlin DSL) · `java-library`
 - 이벤트 스키마는 Java record + `DomainEvent` 인터페이스로 정의
@@ -22,9 +22,9 @@ docker compose up -d
 
 | 서비스 | 포트 |
 |--------|------|
-| MySQL (SSOT) | 3306 |
+| PostgreSQL (SSOT) | 5432 |
 | Redis (세션/큐) | 6379 |
-| pgvector (임베딩) | 5432 |
+| pgvector (임베딩) | 5433 |
 | Elasticsearch (BM25) | 9200 |
 | Kafka (Event Bus) | 9092 |
 
