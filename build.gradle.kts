@@ -1,5 +1,6 @@
 plugins {
 	`java-library`
+	`maven-publish`
 	id("org.flywaydb.flyway") version "11.8.2"
 }
 
@@ -40,4 +41,26 @@ flyway {
 	user = "devpath"
 	password = "localdev"
 	locations = arrayOf("classpath:db/migration")
+}
+
+// GitHub Packages 배포. 인증은 CI의 GITHUB_TOKEN(자동) 또는 로컬 환경변수로 주입한다.
+publishing {
+	publications {
+		create<MavenPublication>("maven") {
+			from(components["java"])
+			groupId = "ai.devpath"
+			artifactId = "devpath-shared"
+			version = project.version.toString()
+		}
+	}
+	repositories {
+		maven {
+			name = "GitHubPackages"
+			url = uri("https://maven.pkg.github.com/DevPathAi/devpath-shared")
+			credentials {
+				username = System.getenv("GITHUB_ACTOR")
+				password = System.getenv("GITHUB_TOKEN")
+			}
+		}
+	}
 }
