@@ -1,5 +1,7 @@
 # 컨테이너 이미지 빌드 파이프라인 Implementation Plan
 
+> **✅ 구현 완료 (2026-06-13)** — 9개 레포 PR 머지·main CI green·gitops deploy 봇 커밋 9개로 검증. **실제 네이밍/위치는 스펙(`../specs/2026-06-13-image-pipeline-design.md`)이 정합 SSOT**: frontend는 `devpath-web`/`devpath-admin`(nginx-unprivileged 8080), migration은 shared `ci.yml` + `Dockerfile.migration`. 아래 Task 3~5의 옛 표기(`devpath-frontend`/`nginx:alpine 80` 등)는 계획 시점 기준이며 실제 구현과 다르다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 서비스 main 머지 시 컨테이너 이미지를 빌드해 `ghcr.io/devpathai`에 커밋 SHA 불변 태그로 push하고, CI가 devpath-gitops의 image 태그를 갱신해 ArgoCD가 자동 배포한다.
