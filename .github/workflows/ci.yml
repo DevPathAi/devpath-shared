@@ -52,6 +52,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile.migration
           push: true
           tags: |
             ghcr.io/devpathai/devpath-migration:${{ github.sha }}
