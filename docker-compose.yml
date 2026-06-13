@@ -5,17 +5,33 @@ name: devpath-local
 # 자격증명은 로컬 개발 전용이다. 스테이징/프로덕션 값은 절대 커밋하지 않는다.
 
 services:
-  mysql:
-    image: mysql:8.4
+  postgres:
+    image: postgres:17-alpine
     environment:
-      MYSQL_ROOT_PASSWORD: localdev
-      MYSQL_DATABASE: devpath
+      POSTGRES_USER: devpath
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: devpath
     ports:
-      - "3306:3306"
+      - "5432:5432"
     volumes:
-      - mysql-data:/var/lib/mysql
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-plocaldev"]
+      test: ["CMD", "pg_isready", "-U", "devpath"]
+      interval: 10s
+      retries: 5
+
+  postgres-vector:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: devpath
+      POSTGRES_PASSWORD: localdev
+      POSTGRES_DB: devpath_vector
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgvector-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "devpath"]
       interval: 10s
       retries: 5
 
@@ -27,17 +43,6 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       retries: 5
-
-  pgvector:
-    image: pgvector/pgvector:pg17
-    environment:
-      POSTGRES_USER: devpath
-      POSTGRES_PASSWORD: localdev
-      POSTGRES_DB: devpath_vector
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgvector-data:/var/lib/postgresql/data
 
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.19.4
@@ -63,5 +68,5 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
 volumes:
-  mysql-data:
+  postgres-data:
   pgvector-data:
