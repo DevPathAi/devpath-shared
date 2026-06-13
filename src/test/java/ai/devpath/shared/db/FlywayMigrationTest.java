@@ -33,4 +33,17 @@ class FlywayMigrationTest {
       assertTrue(rs.next(), "set_updated_at 함수가 존재해야 한다 (공통 규약 마이그레이션)");
     }
   }
+
+  @Test
+  void usersAndDormantArchivesExist() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "%", new String[] {"TABLE"})) {
+      var names = new java.util.HashSet<String>();
+      while (rs.next()) names.add(rs.getString("TABLE_NAME"));
+      assertTrue(names.contains("users"), "users 테이블 필요");
+      assertTrue(names.contains("dormant_user_archives"), "dormant_user_archives 테이블 필요");
+    }
+  }
 }
