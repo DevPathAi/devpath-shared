@@ -78,4 +78,14 @@ class FlywayMigrationTest {
       assertTrue(rs.next(), "user_oauth_identities 테이블 필요");
     }
   }
+
+  @Test
+  void userProfilesTableExists() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "user_profiles", new String[] {"TABLE"})) {
+      assertTrue(rs.next(), "user_profiles 테이블 필요");
+    }
+  }
 }
