@@ -68,4 +68,14 @@ class FlywayMigrationTest {
     assertTrue(cols.contains("onboarding_status"), "users.onboarding_status 필요");
     assertFalse(cols.contains("github_id"), "users.github_id 제거(신원 이관)");
   }
+
+  @Test
+  void oauthIdentitiesTableExists() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "user_oauth_identities", new String[] {"TABLE"})) {
+      assertTrue(rs.next(), "user_oauth_identities 테이블 필요");
+    }
+  }
 }
