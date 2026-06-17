@@ -1,5 +1,6 @@
 package ai.devpath.shared.db;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import javax.sql.DataSource;
@@ -45,5 +46,26 @@ class FlywayMigrationTest {
       assertTrue(names.contains("users"), "users 테이블 필요");
       assertTrue(names.contains("dormant_user_archives"), "dormant_user_archives 테이블 필요");
     }
+  }
+
+  private static java.util.Set<String> columns(String table) throws Exception {
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getColumns(null, "public", table, "%")) {
+      var cols = new java.util.HashSet<String>();
+      while (rs.next()) cols.add(rs.getString("COLUMN_NAME"));
+      return cols;
+    }
+  }
+
+  @Test
+  void usersHasAuthColumnsAndDropsGithubId() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    var cols = columns("users");
+    assertTrue(cols.contains("email"), "users.email 필요");
+    assertTrue(cols.contains("nickname"), "users.nickname 필요");
+    assertTrue(cols.contains("role"), "users.role 필요");
+    assertTrue(cols.contains("onboarding_status"), "users.onboarding_status 필요");
+    assertFalse(cols.contains("github_id"), "users.github_id 제거(신원 이관)");
   }
 }
