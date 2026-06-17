@@ -98,4 +98,14 @@ class FlywayMigrationTest {
       assertTrue(rs.next(), "outbox 테이블 필요");
     }
   }
+
+  @Test
+  void notificationsTableExists() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "notifications", new String[] {"TABLE"})) {
+      assertTrue(rs.next(), "notifications 테이블 필요");
+    }
+  }
 }
