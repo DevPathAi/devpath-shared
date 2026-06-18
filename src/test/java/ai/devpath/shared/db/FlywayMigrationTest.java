@@ -1,6 +1,7 @@
 package ai.devpath.shared.db;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import javax.sql.DataSource;
@@ -106,6 +107,60 @@ class FlywayMigrationTest {
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "notifications", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "notifications 테이블 필요");
+    }
+  }
+
+  @Test
+  void questionBankTableExists() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "question_bank", new String[] {"TABLE"})) {
+      assertTrue(rs.next(), "question_bank 테이블 필요");
+    }
+  }
+
+  @Test
+  void assessmentsTableExists() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "assessments", new String[] {"TABLE"})) {
+      assertTrue(rs.next(), "assessments 테이블 필요");
+    }
+  }
+
+  @Test
+  void assessmentItemsTableExists() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "assessment_items", new String[] {"TABLE"})) {
+      assertTrue(rs.next(), "assessment_items 테이블 필요");
+    }
+  }
+
+  @Test
+  void assessmentResultsTableExists() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection();
+        var rs = c.getMetaData().getTables(null, "public", "assessment_results", new String[] {"TABLE"})) {
+      assertTrue(rs.next(), "assessment_results 테이블 필요");
+    }
+  }
+
+  @Test
+  void questionBankRejectsBadEnumAndRange() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      assertThrows(java.sql.SQLException.class, () ->
+        st.execute("INSERT INTO question_bank(track,question_type,content,answer_key,bloom_level,difficulty) "
+          + "VALUES ('BACKEND_SPRING','MCQ','q','{}','NOPE',0.3)"));
+      assertThrows(java.sql.SQLException.class, () ->
+        st.execute("INSERT INTO question_bank(track,question_type,content,answer_key,bloom_level,difficulty) "
+          + "VALUES ('BACKEND_SPRING','MCQ','q','{}','APPLY',9.9)"));
     }
   }
 }
