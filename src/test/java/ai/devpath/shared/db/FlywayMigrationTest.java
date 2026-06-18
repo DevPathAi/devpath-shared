@@ -163,4 +163,15 @@ class FlywayMigrationTest {
           + "VALUES ('BACKEND_SPRING','MCQ','q','{}','APPLY',9.9)"));
     }
   }
+
+  @Test
+  void assessmentsHasNoUserFk() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      // user_id 교차서비스 FK 제거(서비스 경계): 존재하지 않는 user_id로도 INSERT 가능해야 한다.
+      st.execute("INSERT INTO assessments(user_id, track) VALUES (999999999, 'BACKEND_SPRING')");
+      st.execute("DELETE FROM assessments WHERE user_id = 999999999");
+    }
+  }
 }
