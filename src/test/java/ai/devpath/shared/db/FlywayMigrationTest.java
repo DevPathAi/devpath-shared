@@ -174,4 +174,82 @@ class FlywayMigrationTest {
       st.execute("DELETE FROM assessments WHERE user_id = 999999999");
     }
   }
+
+  @Test
+  void vectorExtensionAndPathTablesExist() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery("SELECT 1 FROM pg_extension WHERE extname = 'vector'")) {
+        assertTrue(rs.next(), "vector 확장 필요");
+      }
+      for (String t : new String[] {"learning_paths", "path_milestones",
+          "path_weekly_tasks", "contents", "content_embeddings"}) {
+        try (var rs = c.getMetaData().getTables(null, "public", t, new String[] {"TABLE"})) {
+          assertTrue(rs.next(), t + " 테이블 필요");
+        }
+      }
+      try (var rs = st.executeQuery(
+          "SELECT format_type(a.atttypid, a.atttypmod) "
+              + "FROM pg_attribute a "
+              + "JOIN pg_class c ON c.oid = a.attrelid "
+              + "JOIN pg_namespace n ON n.oid = c.relnamespace "
+              + "WHERE n.nspname = 'public' AND c.relname = 'content_embeddings' "
+              + "AND a.attname = 'embedding' AND NOT a.attisdropped")) {
+        assertTrue(rs.next(), "content_embeddings.embedding 컬럼 필요");
+        assertTrue("vector(768)".equalsIgnoreCase(rs.getString(1)), "embedding은 VECTOR(768) 필요");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_indexes "
+              + "WHERE schemaname = 'public' "
+              + "AND tablename = 'content_embeddings' "
+              + "AND indexname = 'idx_content_embeddings_hnsw' "
+              + "AND indexdef ILIKE '%USING hnsw%' "
+              + "AND indexdef ILIKE '%vector_cosine_ops%' "
+              + "AND indexdef ILIKE '%WHERE%' "
+              + "AND indexdef ILIKE '%status%' "
+              + "AND indexdef ILIKE '%ACTIVE%'")) {
+        assertTrue(rs.next(), "ACTIVE 임베딩 HNSW cosine partial index 필요");
+      }
+    }
+  }
+
+  @Test
+  void contentEmbeddingsCosineSmoke() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long cid;
+      try (var rs = st.executeQuery("INSERT INTO contents(slug,title,track,content_md) "
+          + "VALUES ('smoke-" + System.nanoTime() + "','t','BACKEND_SPRING','m') RETURNING id")) {
+        assertTrue(rs.next(), "smoke content id 필요");
+        cid = rs.getLong(1);
+      }
+      st.execute("INSERT INTO content_embeddings(content_id,chunk_index,chunk_text,embedding) "
+          + "VALUES (" + cid + ",0,'c', array_fill(0.1::float8, ARRAY[768])::vector)");
+      try (var rs = st.executeQuery(
+          "SELECT embedding <=> array_fill(0.2::float8, ARRAY[768])::vector AS dist "
+              + "FROM content_embeddings WHERE content_id=" + cid)) {
+        assertTrue(rs.next(), "코사인 거리 쿼리 결과 필요");
+        assertTrue(rs.getDouble("dist") >= 0.0, "코사인 거리는 0 이상이어야 한다");
+      }
+      st.execute("DELETE FROM content_embeddings WHERE content_id=" + cid);
+      st.execute("DELETE FROM contents WHERE id=" + cid);
+    }
+  }
+
+  @Test
+  void learningPathsActiveUserUniqueEnforced() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long uid = System.nanoTime();
+      st.execute("INSERT INTO learning_paths(user_id,track,status) VALUES (" + uid
+          + ",'BACKEND_SPRING','ACTIVE')");
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO learning_paths(user_id,track,status) VALUES (" + uid
+              + ",'BACKEND_SPRING','ACTIVE')"));
+      st.execute("DELETE FROM learning_paths WHERE user_id=" + uid);
+    }
+  }
 }

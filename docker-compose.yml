@@ -6,7 +6,7 @@ name: devpath-local
 
 services:
   postgres:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: devpath
       POSTGRES_PASSWORD: localdev
