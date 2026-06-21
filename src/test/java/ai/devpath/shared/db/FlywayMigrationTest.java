@@ -252,4 +252,121 @@ class FlywayMigrationTest {
       st.execute("DELETE FROM learning_paths WHERE user_id=" + uid);
     }
   }
+
+  @Test
+  void userContentProgressTableContract() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = c.getMetaData().getTables(null, "public", "user_content_progress",
+          new String[] {"TABLE"})) {
+        assertTrue(rs.next(), "user_content_progress 테이블 필요");
+      }
+
+      var cols = columns("user_content_progress");
+      for (String col : new String[] {"id", "user_id", "content_id", "scroll_pct",
+          "dwell_sec", "completed_at", "created_at", "updated_at"}) {
+        assertTrue(cols.contains(col), "user_content_progress." + col + " 컬럼 필요");
+      }
+
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_constraint WHERE conname = 'uq_ucp_user_content'")) {
+        assertTrue(rs.next(), "user_id + content_id unique constraint 필요");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_constraint WHERE conname = 'chk_ucp_scroll'")) {
+        assertTrue(rs.next(), "scroll_pct 범위 CHECK 필요");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_constraint WHERE conname = 'chk_ucp_dwell'")) {
+        assertTrue(rs.next(), "dwell_sec 비음수 CHECK 필요");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' "
+              + "AND tablename = 'user_content_progress' "
+              + "AND indexname = 'idx_ucp_user_updated'")) {
+        assertTrue(rs.next(), "user 최신 progress 조회 인덱스 필요");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' "
+              + "AND tablename = 'user_content_progress' "
+              + "AND indexname = 'idx_ucp_content'")) {
+        assertTrue(rs.next(), "content_id 인덱스 필요");
+      }
+    }
+  }
+
+  @Test
+  void userContentProgressConstraintsAndCascadeWork() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long userId = System.nanoTime();
+      long contentId;
+      try (var rs = st.executeQuery("INSERT INTO contents(slug,title,track,content_md) "
+          + "VALUES ('ucp-" + userId + "','t','BACKEND_SPRING','m') RETURNING id")) {
+        assertTrue(rs.next(), "content id 필요");
+        contentId = rs.getLong(1);
+      }
+
+      st.execute("INSERT INTO user_content_progress(user_id,content_id,scroll_pct,dwell_sec) "
+          + "VALUES (" + userId + "," + contentId + ",0.4,10)");
+
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO user_content_progress(user_id,content_id,scroll_pct,dwell_sec) "
+              + "VALUES (" + userId + "," + contentId + ",0.5,11)"));
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO user_content_progress(user_id,content_id,scroll_pct,dwell_sec) "
+              + "VALUES (" + (userId + 1) + "," + contentId + ",-0.1,10)"));
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO user_content_progress(user_id,content_id,scroll_pct,dwell_sec) "
+              + "VALUES (" + (userId + 2) + "," + contentId + ",1.1,10)"));
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO user_content_progress(user_id,content_id,scroll_pct,dwell_sec) "
+              + "VALUES (" + (userId + 3) + "," + contentId + ",0.2,-1)"));
+
+      st.execute("DELETE FROM contents WHERE id = " + contentId);
+      try (var rs = st.executeQuery(
+          "SELECT count(*) FROM user_content_progress WHERE user_id = " + userId)) {
+        assertTrue(rs.next(), "count 결과 필요");
+        assertTrue(rs.getLong(1) == 0L, "content 삭제 시 progress도 cascade 삭제되어야 한다");
+      }
+    }
+  }
+
+  @Test
+  void userContentProgressHasNoUserForeignKeyAndUpdatedAtTrigger() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long userId = 999_999_000L + (System.nanoTime() % 100_000L);
+      long contentId;
+      long progressId;
+      try (var rs = st.executeQuery("INSERT INTO contents(slug,title,track,content_md) "
+          + "VALUES ('ucp-trigger-" + userId + "','t','BACKEND_SPRING','m') RETURNING id")) {
+        assertTrue(rs.next(), "content id 필요");
+        contentId = rs.getLong(1);
+      }
+
+      // user_id는 platform users 논리 참조다. users FK가 없어야 이 INSERT가 통과한다.
+      try (var rs = st.executeQuery(
+          "INSERT INTO user_content_progress(user_id,content_id) VALUES ("
+              + userId + "," + contentId + ") RETURNING id")) {
+        assertTrue(rs.next(), "progress id 필요");
+        progressId = rs.getLong(1);
+      }
+
+      st.execute("UPDATE user_content_progress "
+          + "SET updated_at = TIMESTAMPTZ '2000-01-01 00:00:00+00', dwell_sec = 1 "
+          + "WHERE id = " + progressId);
+      try (var rs = st.executeQuery(
+          "SELECT updated_at > TIMESTAMPTZ '2020-01-01 00:00:00+00' "
+              + "FROM user_content_progress WHERE id = " + progressId)) {
+        assertTrue(rs.next(), "updated_at 결과 필요");
+        assertTrue(rs.getBoolean(1), "updated_at trigger가 now()로 갱신되어야 한다");
+      }
+
+      st.execute("DELETE FROM contents WHERE id = " + contentId);
+    }
+  }
 }
