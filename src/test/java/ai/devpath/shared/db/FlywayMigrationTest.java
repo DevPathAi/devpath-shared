@@ -369,4 +369,63 @@ class FlywayMigrationTest {
       st.execute("DELETE FROM contents WHERE id = " + contentId);
     }
   }
+
+  @Test
+  void sandboxSessionsTableContract() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = c.getMetaData().getTables(null, "public", "sandbox_sessions",
+          new String[] {"TABLE"})) {
+        assertTrue(rs.next(), "sandbox_sessions 테이블 필요");
+      }
+      var cols = columns("sandbox_sessions");
+      for (String col : new String[] {"id", "user_id", "content_id", "code_block_id",
+          "language", "container_id", "status", "submitted_code", "stdout", "stderr",
+          "exit_code", "cpu_ms_used", "memory_mb_peak", "started_at", "finished_at",
+          "created_at", "updated_at"}) {
+        assertTrue(cols.contains(col), "sandbox_sessions." + col + " 컬럼 필요");
+      }
+
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO sandbox_sessions(user_id,language,submitted_code) "
+              + "VALUES (1,'RUBY','x')"));
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO sandbox_sessions(user_id,language,status,submitted_code) "
+              + "VALUES (1,'PYTHON','BOGUS','x')"));
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' "
+              + "AND tablename = 'sandbox_sessions' "
+              + "AND indexname = 'idx_sandbox_user_started'")) {
+        assertTrue(rs.next(), "user 실습이력 인덱스 필요");
+      }
+    }
+  }
+
+  @Test
+  void sandboxSessionsHasNoUserFkAndUpdatedAtTrigger() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long userId = 999_999_000L + (System.nanoTime() % 100_000L);
+      long sid;
+      // user_id는 platform users 논리 참조다. users FK가 없어야 이 INSERT가 통과한다.
+      try (var rs = st.executeQuery(
+          "INSERT INTO sandbox_sessions(user_id,language,submitted_code) "
+              + "VALUES (" + userId + ",'PYTHON','print(1)') RETURNING id")) {
+        assertTrue(rs.next(), "sandbox_session id 필요");
+        sid = rs.getLong(1);
+      }
+      st.execute("UPDATE sandbox_sessions "
+          + "SET updated_at = TIMESTAMPTZ '2000-01-01 00:00:00+00', status = 'RUNNING' "
+          + "WHERE id = " + sid);
+      try (var rs = st.executeQuery(
+          "SELECT updated_at > TIMESTAMPTZ '2020-01-01 00:00:00+00' "
+              + "FROM sandbox_sessions WHERE id = " + sid)) {
+        assertTrue(rs.next(), "updated_at 결과 필요");
+        assertTrue(rs.getBoolean(1), "updated_at trigger가 now()로 갱신되어야 한다");
+      }
+      st.execute("DELETE FROM sandbox_sessions WHERE id = " + sid);
+    }
+  }
 }
