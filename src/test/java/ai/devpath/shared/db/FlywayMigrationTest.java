@@ -428,4 +428,78 @@ class FlywayMigrationTest {
       st.execute("DELETE FROM sandbox_sessions WHERE id = " + sid);
     }
   }
+
+  @Test
+  void aiCodeReviewsTableContract() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = c.getMetaData().getTables(null, "public", "ai_code_reviews",
+          new String[] {"TABLE"})) {
+        assertTrue(rs.next(), "ai_code_reviews 테이블 필요");
+      }
+      var cols = columns("ai_code_reviews");
+      for (String col : new String[] {"id", "sandbox_session_id", "user_id", "content_id",
+          "status", "provider", "confidence", "strengths", "improvements", "security",
+          "feedback", "error_code", "created_at", "updated_at"}) {
+        assertTrue(cols.contains(col), "ai_code_reviews." + col + " 컬럼 필요");
+      }
+
+      // status CHECK
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ai_code_reviews(sandbox_session_id,user_id,status) "
+              + "VALUES (1,1,'BOGUS')"));
+      // feedback CHECK
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ai_code_reviews(sandbox_session_id,user_id,feedback) "
+              + "VALUES (1,1,'MAYBE')"));
+      // confidence 범위 CHECK
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ai_code_reviews(sandbox_session_id,user_id,confidence) "
+              + "VALUES (1,1,200)"));
+
+      // UNIQUE(sandbox_session_id)
+      long sid = System.nanoTime();
+      st.execute("INSERT INTO ai_code_reviews(sandbox_session_id,user_id) VALUES ("
+          + sid + ",1)");
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ai_code_reviews(sandbox_session_id,user_id) VALUES ("
+              + sid + ",2)"));
+      st.execute("DELETE FROM ai_code_reviews WHERE sandbox_session_id = " + sid);
+
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' "
+              + "AND tablename = 'ai_code_reviews' "
+              + "AND indexname = 'idx_ai_reviews_user_created'")) {
+        assertTrue(rs.next(), "user 최신 리뷰 조회 인덱스 필요");
+      }
+    }
+  }
+
+  @Test
+  void aiCodeReviewsNoUserFkAndUpdatedAtTrigger() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long userId = 999_999_000L + (System.nanoTime() % 100_000L);
+      long reviewId;
+      // user_id/sandbox_session_id는 논리 참조다. FK가 없어야 존재하지 않는 id로도 INSERT가 통과한다.
+      try (var rs = st.executeQuery(
+          "INSERT INTO ai_code_reviews(sandbox_session_id,user_id,status) "
+              + "VALUES (" + userId + "," + userId + ",'PENDING') RETURNING id")) {
+        assertTrue(rs.next(), "ai_code_reviews id 필요");
+        reviewId = rs.getLong(1);
+      }
+      st.execute("UPDATE ai_code_reviews "
+          + "SET updated_at = TIMESTAMPTZ '2000-01-01 00:00:00+00', status = 'DONE' "
+          + "WHERE id = " + reviewId);
+      try (var rs = st.executeQuery(
+          "SELECT updated_at > TIMESTAMPTZ '2020-01-01 00:00:00+00' "
+              + "FROM ai_code_reviews WHERE id = " + reviewId)) {
+        assertTrue(rs.next(), "updated_at 결과 필요");
+        assertTrue(rs.getBoolean(1), "updated_at trigger가 now()로 갱신되어야 한다");
+      }
+      st.execute("DELETE FROM ai_code_reviews WHERE id = " + reviewId);
+    }
+  }
 }
