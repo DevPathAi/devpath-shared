@@ -502,4 +502,77 @@ class FlywayMigrationTest {
       st.execute("DELETE FROM ai_code_reviews WHERE id = " + reviewId);
     }
   }
+
+  @Test
+  void aiMentorSessionsTableContract() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = c.getMetaData().getTables(null, "public", "ai_mentor_sessions",
+          new String[] {"TABLE"})) {
+        assertTrue(rs.next(), "ai_mentor_sessions 테이블 필요");
+      }
+      var cols = columns("ai_mentor_sessions");
+      for (String col : new String[] {"id", "user_id", "content_id", "question", "answer",
+          "context_snapshot", "reference_links", "provider", "status", "error_code",
+          "created_at", "updated_at"}) {
+        assertTrue(cols.contains(col), "ai_mentor_sessions." + col + " 컬럼 필요");
+      }
+
+      // status CHECK (DONE/FAILED만 — PENDING 없음, M-6)
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ai_mentor_sessions(user_id,question,status) "
+              + "VALUES (1,'q','PENDING')"));
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ai_mentor_sessions(user_id,question,status) "
+              + "VALUES (1,'q','BOGUS')"));
+
+      // 단발(UNIQUE 없음): 같은 user로 2건 INSERT 통과
+      long uid = System.nanoTime();
+      st.execute("INSERT INTO ai_mentor_sessions(user_id,question,status) VALUES ("
+          + uid + ",'q1','DONE')");
+      st.execute("INSERT INTO ai_mentor_sessions(user_id,question,status) VALUES ("
+          + uid + ",'q2','DONE')");
+      try (var rs = st.executeQuery(
+          "SELECT count(*) FROM ai_mentor_sessions WHERE user_id = " + uid)) {
+        assertTrue(rs.next());
+        assertTrue(rs.getInt(1) == 2, "단발이라 동일 user 다건 허용(UNIQUE 없음)");
+      }
+      st.execute("DELETE FROM ai_mentor_sessions WHERE user_id = " + uid);
+
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_indexes WHERE schemaname = 'public' "
+              + "AND tablename = 'ai_mentor_sessions' "
+              + "AND indexname = 'idx_ai_mentor_user_created'")) {
+        assertTrue(rs.next(), "user 최신 멘토 이력 조회 인덱스 필요");
+      }
+    }
+  }
+
+  @Test
+  void aiMentorSessionsNoUserFkAndUpdatedAtTrigger() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long userId = 999_999_000L + (System.nanoTime() % 100_000L);
+      long sessionId;
+      // user_id/content_id는 논리 참조다. FK가 없어야 존재하지 않는 id로도 INSERT가 통과한다.
+      try (var rs = st.executeQuery(
+          "INSERT INTO ai_mentor_sessions(user_id,content_id,question,status) "
+              + "VALUES (" + userId + "," + userId + ",'q','DONE') RETURNING id")) {
+        assertTrue(rs.next(), "ai_mentor_sessions id 필요");
+        sessionId = rs.getLong(1);
+      }
+      st.execute("UPDATE ai_mentor_sessions "
+          + "SET updated_at = TIMESTAMPTZ '2000-01-01 00:00:00+00', answer = 'a' "
+          + "WHERE id = " + sessionId);
+      try (var rs = st.executeQuery(
+          "SELECT updated_at > TIMESTAMPTZ '2020-01-01 00:00:00+00' "
+              + "FROM ai_mentor_sessions WHERE id = " + sessionId)) {
+        assertTrue(rs.next(), "updated_at 결과 필요");
+        assertTrue(rs.getBoolean(1), "updated_at trigger가 now()로 갱신되어야 한다");
+      }
+      st.execute("DELETE FROM ai_mentor_sessions WHERE id = " + sessionId);
+    }
+  }
 }
