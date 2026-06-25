@@ -38,3 +38,4 @@ out/
 
 ### OMC (oh-my-claudecode 세션 상태 — 커밋 금지) ###
 .omc/
+.gstack/
