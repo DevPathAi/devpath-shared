@@ -575,4 +575,117 @@ class FlywayMigrationTest {
       st.execute("DELETE FROM ai_mentor_sessions WHERE id = " + sessionId);
     }
   }
+
+  @Test
+  void communityPostsTableContract() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      var cols = columns("community_posts");
+      for (String col : new String[] {"id", "author_id", "board_type", "title", "body_md",
+          "body_html", "status", "view_count", "upvote_count", "downvote_count",
+          "created_at", "updated_at"}) {
+        assertTrue(cols.contains(col), "community_posts." + col + " 컬럼 필요");
+      }
+      // board_type CHECK
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO community_posts(author_id,board_type,title,body_md) "
+              + "VALUES (1,'BOGUS','t','b')"));
+      // status CHECK
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO community_posts(author_id,board_type,title,body_md,status) "
+              + "VALUES (1,'QNA','t','b','NOPE')"));
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_indexes WHERE schemaname='public' "
+              + "AND tablename='community_posts' "
+              + "AND indexname='idx_community_posts_board_status_created'")) {
+        assertTrue(rs.next(), "게시판별 최신글 인덱스 필요");
+      }
+    }
+  }
+
+  @Test
+  void communityQnaTablesAndVotesContract() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      for (String t : new String[] {"community_questions", "community_answers",
+          "community_votes", "community_tags", "community_post_tags", "community_ai_answers"}) {
+        try (var rs = c.getMetaData().getTables(null, "public", t, new String[] {"TABLE"})) {
+          assertTrue(rs.next(), t + " 테이블 필요");
+        }
+      }
+      // votes: value CHECK + target CHECK + UNIQUE(user_id,target_type,target_id)
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO community_votes(user_id,target_type,target_id,value) "
+              + "VALUES (1,'POST',1,2)"));
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO community_votes(user_id,target_type,target_id,value) "
+              + "VALUES (1,'BOGUS',1,1)"));
+      long uid = System.nanoTime();
+      st.execute("INSERT INTO community_votes(user_id,target_type,target_id,value) "
+          + "VALUES (" + uid + ",'POST',1,1)");
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO community_votes(user_id,target_type,target_id,value) "
+              + "VALUES (" + uid + ",'POST',1,-1)"));
+      st.execute("DELETE FROM community_votes WHERE user_id=" + uid);
+    }
+  }
+
+  @Test
+  void communityQuestionEmbeddingVectorAndAiAnswerIdempotency() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      // question_embedding은 VECTOR(768)
+      try (var rs = st.executeQuery(
+          "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a "
+              + "JOIN pg_class cl ON cl.oid = a.attrelid "
+              + "JOIN pg_namespace n ON n.oid = cl.relnamespace "
+              + "WHERE n.nspname='public' AND cl.relname='community_questions' "
+              + "AND a.attname='question_embedding' AND NOT a.attisdropped")) {
+        assertTrue(rs.next(), "question_embedding 컬럼 필요");
+        assertTrue("vector(768)".equalsIgnoreCase(rs.getString(1)), "question_embedding은 VECTOR(768)");
+      }
+      // valid question 선행(FK 충족)으로 status CHECK와 PK 멱등을 정확히 분리 검증
+      long pid;
+      try (var rs = st.executeQuery("INSERT INTO community_posts(author_id,board_type,title,body_md) "
+          + "VALUES (1,'QNA','t','b') RETURNING id")) {
+        assertTrue(rs.next()); pid = rs.getLong(1);
+      }
+      st.execute("INSERT INTO community_questions(post_id) VALUES (" + pid + ")");
+      // status CHECK: PENDING 거부(valid FK라 FK 위반이 아닌 CHECK 위반)
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO community_ai_answers(question_id,status) VALUES (" + pid + ",'PENDING')"));
+      // PK(question_id) 멱등: 같은 question_id 중복 거부
+      st.execute("INSERT INTO community_ai_answers(question_id,status) VALUES (" + pid + ",'DONE')");
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO community_ai_answers(question_id,status) VALUES (" + pid + ",'DONE')"));
+      st.execute("DELETE FROM community_posts WHERE id=" + pid); // cascade questions/ai_answers
+    }
+  }
+
+  @Test
+  void communityNoAuthorFkAndUpdatedAtTrigger() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      long authorId = 999_999_000L + (System.nanoTime() % 100_000L);
+      long pid;
+      // author_id는 platform users 논리 참조다. FK가 없어야 존재하지 않는 id로도 INSERT가 통과한다.
+      try (var rs = st.executeQuery("INSERT INTO community_posts(author_id,board_type,title,body_md) "
+          + "VALUES (" + authorId + ",'QNA','t','b') RETURNING id")) {
+        assertTrue(rs.next()); pid = rs.getLong(1);
+      }
+      st.execute("UPDATE community_posts SET updated_at = TIMESTAMPTZ '2000-01-01 00:00:00+00', "
+          + "view_count = 1 WHERE id = " + pid);
+      try (var rs = st.executeQuery(
+          "SELECT updated_at > TIMESTAMPTZ '2020-01-01 00:00:00+00' "
+              + "FROM community_posts WHERE id = " + pid)) {
+        assertTrue(rs.next());
+        assertTrue(rs.getBoolean(1), "updated_at trigger가 now()로 갱신되어야 한다");
+      }
+      st.execute("DELETE FROM community_posts WHERE id = " + pid);
+    }
+  }
 }
