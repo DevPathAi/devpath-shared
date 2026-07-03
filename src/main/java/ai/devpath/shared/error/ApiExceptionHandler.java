@@ -35,6 +35,12 @@ public class ApiExceptionHandler {
     return build(ErrorCode.VALIDATION_FAILED, "validation failed");
   }
 
+  /** 다수 svc가 잘못된 입력에 던지는 IllegalArgumentException → VALIDATION_FAILED(400). */
+  @ExceptionHandler(IllegalArgumentException.class)
+  public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException e) {
+    return build(ErrorCode.VALIDATION_FAILED, e.getMessage());
+  }
+
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorResponse> handleGeneric(Exception e) {
     return build(ErrorCode.INTERNAL_ERROR, "internal error");
