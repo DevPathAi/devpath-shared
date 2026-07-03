@@ -57,6 +57,15 @@ class ErrorEnvelopeTest {
   }
 
   @Test
+  void illegalArgument_maps_to_validation_failed_400() {
+    // 다수 svc가 잘못된 입력에 IllegalArgumentException(400)을 던진다 — 공용 매핑.
+    var r = handler.handleIllegalArgument(new IllegalArgumentException("bad input"));
+    assertEquals(400, r.getStatusCode().value());
+    assertEquals("VALIDATION_FAILED", r.getBody().error().code());
+    assertEquals("bad input", r.getBody().error().message());
+  }
+
+  @Test
   void error_codes_match_spec_http_status_table() {
     assertEquals(401, ErrorCode.UNAUTHORIZED.status());
     assertEquals(403, ErrorCode.FORBIDDEN.status());
