@@ -7,6 +7,9 @@ name: devpath-local
 services:
   postgres:
     image: pgvector/pgvector:pg17
+    # 로컬 전체 테스트가 다수 @SpringBootTest 컨텍스트×Hikari 풀로 커넥션을 많이 열어
+    # 기본 max_connections(100)에 근접할 수 있어 로컬 여유분 확보(각 서비스 테스트의 hikari 풀 상한과 병행).
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: devpath
       POSTGRES_PASSWORD: localdev
