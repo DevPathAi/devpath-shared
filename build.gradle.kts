@@ -26,6 +26,7 @@ dependencies {
 	// 버전은 Spring Boot 4.0.7 관리버전(spring-boot-dependencies-4.0.7.pom)과 일치.
 	compileOnly("org.springframework:spring-web:7.0.8")
 	compileOnly("org.springframework.security:spring-security-core:7.0.6")
+	compileOnly("org.springframework:spring-webmvc:7.0.8")
 
 	// Flyway 중앙 스키마 (SSOT) — 마이그레이션은 shared가 소유한다.
 	implementation("org.flywaydb:flyway-core:11.8.2")
@@ -36,6 +37,7 @@ dependencies {
 	testImplementation("org.junit.jupiter:junit-jupiter")
 	testImplementation("org.springframework:spring-web:7.0.8")
 	testImplementation("org.springframework.security:spring-security-core:7.0.6")
+	testImplementation("org.springframework:spring-webmvc:7.0.8")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
