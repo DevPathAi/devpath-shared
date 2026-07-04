@@ -54,6 +54,7 @@ dependencies {
 	testImplementation("org.testcontainers:junit-jupiter")
 	testImplementation("org.springframework.boot:spring-boot-autoconfigure:4.0.7")
 	testImplementation("org.springframework.boot:spring-boot-test:4.0.7")
+	testImplementation("org.assertj:assertj-core:3.27.3")
 }
 
 tasks.withType<Test> {

@@ -10,28 +10,45 @@ import software.amazon.awssdk.services.s3.model.PutBucketPolicyRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
-/** AWS SDK v2 S3 기반 구현(MinIO endpoint override + path-style). */
+/**
+ * AWS SDK v2 S3 기반 구현(MinIO endpoint override + path-style).
+ *
+ * <p>버킷 확인/생성은 첫 {@link #put}에서 lazy로 수행한다 — 빈 생성(자동설정) 시점에는 S3에
+ * 접촉하지 않으므로 스토리지 미가용 환경에서도 컨텍스트가 기동한다.
+ */
 public class S3ObjectStorage implements ObjectStorage {
 
   private final S3Client s3;
   private final StorageProperties props;
+  private volatile boolean bucketReady;
 
   public S3ObjectStorage(S3Client s3, StorageProperties props) {
     this.s3 = s3;
     this.props = props;
-    ensureBucket();
   }
 
   private void ensureBucket() {
-    String bucket = props.getBucket();
-    try {
-      s3.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
-    } catch (NoSuchBucketException e) {
-      s3.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
-      s3.putBucketPolicy(
-          PutBucketPolicyRequest.builder().bucket(bucket).policy(publicReadPolicy(bucket)).build());
-    } catch (S3Exception e) {
-      throw new StorageException("버킷 초기화 실패: " + bucket, e);
+    if (bucketReady) {
+      return;
+    }
+    synchronized (this) {
+      if (bucketReady) {
+        return;
+      }
+      String bucket = props.getBucket();
+      try {
+        s3.headBucket(HeadBucketRequest.builder().bucket(bucket).build());
+      } catch (NoSuchBucketException e) {
+        s3.createBucket(CreateBucketRequest.builder().bucket(bucket).build());
+        s3.putBucketPolicy(
+            PutBucketPolicyRequest.builder()
+                .bucket(bucket)
+                .policy(publicReadPolicy(bucket))
+                .build());
+      } catch (S3Exception e) {
+        throw new StorageException("버킷 초기화 실패: " + bucket, e);
+      }
+      bucketReady = true;
     }
   }
 
@@ -43,6 +60,7 @@ public class S3ObjectStorage implements ObjectStorage {
 
   @Override
   public StoredObject put(String key, byte[] content, String contentType) {
+    ensureBucket();
     try {
       s3.putObject(
           PutObjectRequest.builder()
