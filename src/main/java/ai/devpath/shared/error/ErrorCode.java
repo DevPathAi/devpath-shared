@@ -16,6 +16,7 @@ public enum ErrorCode {
   QUOTA_EXCEEDED(429),
   AI_KILL_SWITCH_ACTIVE(503),
   SANDBOX_UNAVAILABLE(503),
+  STORAGE_UNAVAILABLE(503),
   INTERNAL_ERROR(500);
 
   private final int status;
