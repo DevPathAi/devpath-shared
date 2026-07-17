@@ -20,6 +20,7 @@ repositories {
 
 dependencies {
 	api("com.fasterxml.jackson.core:jackson-databind:2.20.1")
+	api("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.20.1")
 
 	// 공용 에러 envelope 핸들러(ai.devpath.shared.error.ApiExceptionHandler)용.
 	// compileOnly라 shared 소비자(각 svc)에게 Spring을 강제하지 않는다 — svc는 이미 Spring Boot로 런타임 제공.
