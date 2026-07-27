@@ -26,6 +26,7 @@ dependencies {
 	// 버전은 Spring Boot 4.0.7 관리버전(spring-boot-dependencies-4.0.7.pom)과 일치.
 	compileOnly("org.springframework:spring-web:7.0.8")
 	compileOnly("org.springframework.security:spring-security-core:7.0.6")
+	compileOnly("org.springframework:spring-webmvc:7.0.8")
 
 	// Flyway 중앙 스키마 (SSOT) — 마이그레이션은 shared가 소유한다.
 	implementation("org.flywaydb:flyway-core:11.8.2")
@@ -36,7 +37,24 @@ dependencies {
 	testImplementation("org.junit.jupiter:junit-jupiter")
 	testImplementation("org.springframework:spring-web:7.0.8")
 	testImplementation("org.springframework.security:spring-security-core:7.0.6")
+	testImplementation("org.springframework:spring-webmvc:7.0.8")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+	// 오브젝트 스토리지(AWS SDK v2 S3 — MinIO 호환). Spring과 동일하게 compileOnly:
+	// 소비 svc가 런타임 s3 의존을 제공한다.
+	compileOnly(platform("software.amazon.awssdk:bom:2.28.0"))
+	compileOnly("software.amazon.awssdk:s3")
+	compileOnly("org.springframework.boot:spring-boot-autoconfigure:4.0.7")
+
+	// 스토리지 테스트: 실 s3 클라이언트 + MinIO Testcontainers + 자동설정 검증.
+	testImplementation(platform("software.amazon.awssdk:bom:2.28.0"))
+	testImplementation("software.amazon.awssdk:s3")
+	testImplementation(platform("org.testcontainers:testcontainers-bom:1.20.4"))
+	testImplementation("org.testcontainers:minio")
+	testImplementation("org.testcontainers:junit-jupiter")
+	testImplementation("org.springframework.boot:spring-boot-autoconfigure:4.0.7")
+	testImplementation("org.springframework.boot:spring-boot-test:4.0.7")
+	testImplementation("org.assertj:assertj-core:3.27.3")
 }
 
 tasks.withType<Test> {
