@@ -80,7 +80,7 @@ jobs:
           curl -sLo kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz
           tar -xzf kustomize.tar.gz && sudo mv kustomize /usr/local/bin/
       - name: set image to commit SHA
-        working-directory: gitops/apps/_migration/base
+        working-directory: gitops/apps/devpath-migration/base
         run: kustomize edit set image ghcr.io/devpathai/devpath-migration=ghcr.io/devpathai/devpath-migration:${{ github.sha }}
       - name: commit & push
         working-directory: gitops

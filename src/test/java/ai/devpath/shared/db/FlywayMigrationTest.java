@@ -688,4 +688,26 @@ class FlywayMigrationTest {
       st.execute("DELETE FROM community_posts WHERE id = " + pid);
     }
   }
+
+  @Test
+  void questionBankSeeded() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement();
+        var rs = st.executeQuery("SELECT count(*) FROM question_bank")) {
+      assertTrue(rs.next(), "count 결과 필요");
+      assertTrue(rs.getLong(1) >= 500, "question_bank는 500문항 이상 시드되어야 한다");
+    }
+  }
+
+  @Test
+  void contentsSeeded() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement();
+        var rs = st.executeQuery("SELECT count(*) FROM contents")) {
+      assertTrue(rs.next(), "count 결과 필요");
+      assertTrue(rs.getLong(1) >= 150, "contents는 150개 이상 시드되어야 한다");
+    }
+  }
 }
