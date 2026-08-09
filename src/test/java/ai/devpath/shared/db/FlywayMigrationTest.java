@@ -710,4 +710,39 @@ class FlywayMigrationTest {
       assertTrue(rs.getLong(1) >= 150, "contents는 150개 이상 시드되어야 한다");
     }
   }
+
+  /**
+   * 광고 슬롯별 소스 설정 시드. 슬롯 3개가 정확히 존재하는지만 본다.
+   *
+   * <p>source·adsense_slot_id의 현재 값은 단언하지 않는다 — 이 DB는 platform-svc
+   * 테스트와 공유되고 그쪽이 슬롯 설정을 바꾸므로, 값을 고정으로 보면 실행 순서에
+   * 따라 깨진다. 이 파일의 방침대로 "이미 적용된 DB에서도 멱등하게 통과하는
+   * 결과 상태"를 검증한다.
+   */
+  @Test
+  void adSlotConfigSeedsThreeSlots() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement();
+        var rs = st.executeQuery("SELECT slot FROM ad_slot_config ORDER BY slot")) {
+      var slots = new java.util.ArrayList<String>();
+      while (rs.next()) slots.add(rs.getString("slot"));
+      assertTrue(
+          slots.equals(java.util.List.of("COMMUNITY_FEED", "CONTENT_PAGE", "DASHBOARD_TOP")),
+          "슬롯 3행이 시드되어야 한다 (실제: " + slots + ")");
+    }
+  }
+
+  /** 슬롯·소스 CHECK 제약이 카탈로그 밖의 값을 막아야 한다. */
+  @Test
+  void adSlotConfigRejectsUnknownSlotAndSource() throws Exception {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration").load().migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ad_slot_config(slot,source) VALUES ('SIDEBAR','HOUSE')"));
+      assertThrows(java.sql.SQLException.class, () ->
+          st.execute("INSERT INTO ad_slot_config(slot,source) VALUES ('DASHBOARD_TOP','BANNERFLOW')"));
+    }
+  }
 }
