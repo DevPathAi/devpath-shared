@@ -85,8 +85,11 @@ Expected: `postgres` 서비스가 `running` 상태.
         assertTrue(rs.next(), "집계 결과 필요");
         long total = rs.getLong("total");
         assertTrue(total >= 500, "문항은 500개 이상이어야 한다 (실제: " + total + ")");
-        assertTrue(rs.getLong("korean") == total,
-            "모든 문항 본문이 한국어여야 한다 (한국어: " + rs.getLong("korean") + " / " + total + ")");
+        // 같은 DB 를 쓰는 다른 테스트가 픽스처 행을 남길 수 있으므로 "전부"가 아니라
+        // "시드 분량 이상"으로 단언한다. 시드 500개 중 하나라도 한국어가 아니면
+        // korean < 500 이 되어 잡힌다.
+        assertTrue(rs.getLong("korean") >= 500,
+            "한국어 문항이 500개 이상이어야 한다 (한국어: " + rs.getLong("korean") + " / " + total + ")");
         assertTrue(rs.getLong("template") == 0,
             "제네릭 영어 템플릿 문항이 남아 있으면 안 된다 (실제: " + rs.getLong("template") + ")");
         assertTrue(rs.getLong("old_brand") == 0,
@@ -117,8 +120,10 @@ Expected: `postgres` 서비스가 `running` 상태.
       assertTrue(rs.next(), "집계 결과 필요");
       long total = rs.getLong("total");
       assertTrue(total >= 150, "콘텐츠는 150개 이상이어야 한다 (실제: " + total + ")");
-      assertTrue(rs.getLong("korean") == total,
-          "모든 콘텐츠 본문이 한국어여야 한다 (한국어: " + rs.getLong("korean") + " / " + total + ")");
+      // 이 파일의 다른 테스트가 contents 에 픽스처 행('smoke-…'·'ucp-…', 본문 'm')을
+      // 넣고 지운다. 그 테스트가 중간에 실패하면 행이 남으므로 "전부"로 단언하지 않는다.
+      assertTrue(rs.getLong("korean") >= 150,
+          "한국어 콘텐츠가 150개 이상이어야 한다 (한국어: " + rs.getLong("korean") + " / " + total + ")");
       assertTrue(rs.getLong("old_brand") == 0,
           "폐기된 브랜드 DevPath가 노출되면 안 된다 (실제: " + rs.getLong("old_brand") + ")");
     }
@@ -139,8 +144,10 @@ Expected: `postgres` 서비스가 `running` 상태.
       assertTrue(rs.next(), "집계 결과 필요");
       long total = rs.getLong("total");
       assertTrue(total >= 200, "임베딩은 200건 이상 시드되어야 한다 (실제: " + total + ")");
-      assertTrue(rs.getLong("distinct_vec") == total,
-          "모든 임베딩 벡터가 서로 달라야 한다 (서로 다른 값: "
+      // 모든 행이 같은 벡터면 유사도 검색이 무의미해진다.
+      // contentEmbeddingsCosineSmoke 가 남길 수 있는 픽스처 1행을 감안해 >= 로 둔다.
+      assertTrue(rs.getLong("distinct_vec") >= 200,
+          "서로 다른 임베딩 벡터가 200개 이상이어야 한다 (서로 다른 값: "
               + rs.getLong("distinct_vec") + " / " + total + ")");
     }
   }
@@ -153,8 +160,8 @@ cd /d/workspace/dpa/devpath-shared && ./gradlew test --tests '*FlywayMigrationTe
 ```
 
 Expected: FAIL. 세 테스트가 모두 실패한다.
-- `questionBankSeedIsKorean` — "모든 문항 본문이 한국어여야 한다 (한국어: 0 / 500)"
-- `contentSeedIsKorean` — "모든 콘텐츠 본문이 한국어여야 한다 (한국어: 0 / 150)"
+- `questionBankSeedIsKorean` — "한국어 문항이 500개 이상이어야 한다 (한국어: 0 / 500)"
+- `contentSeedIsKorean` — "한국어 콘텐츠가 150개 이상이어야 한다 (한국어: 0 / 150)"
 - `contentEmbeddingsSeeded` — "임베딩은 200건 이상 시드되어야 한다 (실제: 0)"
 
 > 실패 메시지에 위 숫자가 보이지 않으면 DB가 옛 시드 상태가 아닌 것이다. `docker compose down -v postgres && docker compose up -d postgres` 로 초기화하고 다시 돌린다.
