@@ -29,7 +29,8 @@
 | 레포 | 파일 | 책임 |
 |---|---|---|
 | shared | `src/main/resources/db/migration/V202608131001__reseed_korean_seed_data.sql` (신설) | 옛 시드 삭제 + 한국어 문항·콘텐츠·임베딩 적재 |
-| shared | `src/test/java/ai/devpath/shared/db/FlywayMigrationTest.java` (수정) | 시드 **품질** 단언 — 개수만 보던 기존 단언 보강 |
+| shared | `src/test/java/ai/devpath/shared/db/FlywayMigrationTest.java` (수정) | 시드 **품질** 단언 — 개수만 보던 기존 단언 보강 · 마이그레이션 헬퍼 |
+| shared | `Dockerfile.migration` (수정) | 운영 Flyway 의 placeholder 치환을 끈다 |
 | learning-svc | `src/main/resources/db/seed/question_bank_md2_seed.sql` (읽기 전용) | 문항 SQL 원본 |
 | learning-svc | `src/main/resources/db/seed/content_md2_seed.sql` (읽기 전용) | 콘텐츠 + 임베딩 SQL 원본 |
 
@@ -305,6 +306,77 @@ Expected:
 - `DELETE FROM` **4**건 (learning_paths · assessments · question_bank · contents)
 - `INSERT INTO question_bank` 1 · `INSERT INTO contents` 1 · `INSERT INTO content_embeddings` 238
 - `IF (SELECT count` **0**건 — 가드가 있으면 안 된다
+
+- [ ] **Step 5b: Flyway placeholder 치환을 끈다 (운영 이미지)**
+
+> **왜 필요한가 (2026-08-13 실증).** 승인된 한국어 콘텐츠에는 JS·Dart 템플릿 리터럴이
+> **정상적인 코드 예시**로 들어 있다 — `` `HTTP error! status: ${response.status}` ``,
+> `${count}`, `${bloc.count}`, `${maven.build.timestamp}` 등 31곳. Flyway 는 기본값
+> (`placeholderReplacement=true`)에서 SQL 본문의 `${...}` 를 치환 대상 placeholder 로 해석해
+> 파싱에 실패한다. 운영과 같은 `flyway/flyway:11-alpine` 이미지로 재현·해결을 실증했다.
+>
+> ```
+> ON  → ERROR: Unable to parse statement ... No value provided for placeholder: ${response.status}
+> OFF → Successfully applied 43 migrations to schema "public", now at version v202608131001
+> ```
+>
+> 기존 마이그레이션 39개 중 `${` 를 쓰는 것은 **0건**이라 치환을 꺼도 잃는 기능이 없다.
+
+`Dockerfile.migration` 에 환경변수 한 줄을 추가한다. 설정이 SQL 과 같은 레포에서 함께 이동하므로
+gitops 변경이나 별도 릴리스가 필요 없다.
+
+```dockerfile
+FROM flyway/flyway:11-alpine
+# SQL 마이그레이션을 이미지에 내장한다. CI가 SHA 태그로 push하고
+# gitops job.yaml의 이미지 태그를 교체하면 ArgoCD가 Job을 재실행한다.
+COPY src/main/resources/db/migration /flyway/sql
+
+# 시드 콘텐츠에 JS·Dart 템플릿 리터럴(${...})이 코드 예시로 들어 있다.
+# Flyway 는 기본값에서 이를 placeholder 로 해석해 파싱에 실패하므로 치환을 끈다.
+# 이 레포의 마이그레이션은 placeholder 를 쓰지 않는다(전수 확인: 0건).
+ENV FLYWAY_PLACEHOLDER_REPLACEMENT=false
+```
+
+- [ ] **Step 5c: 테스트 하네스도 같은 설정을 쓰게 한다**
+
+`FlywayMigrationTest` 는 36개 테스트가 각각 같은 2줄 체인으로 마이그레이션한다. 헬퍼로 묶고
+그 자리에서 치환을 끈다. 운영과 테스트가 같은 Flyway 설정을 쓰게 하는 것이 목적이다.
+
+파일의 `dataSource()` 메서드 바로 아래에 헬퍼를 추가한다.
+
+```java
+  /**
+   * 모든 테스트가 같은 설정으로 마이그레이션한다.
+   *
+   * <p>placeholderReplacement 를 끈다: 시드 콘텐츠에 JS·Dart 템플릿 리터럴
+   * ({@code ${response.status}}, {@code ${count}} 등)이 정상적인 코드 예시로 들어 있는데,
+   * Flyway 는 기본값에서 이것을 치환 대상 placeholder 로 해석해 파싱에 실패한다.
+   * 운영 이미지도 Dockerfile.migration 의 FLYWAY_PLACEHOLDER_REPLACEMENT=false 로
+   * 같은 설정을 쓴다.
+   */
+  private static void migrate() {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration")
+        .placeholderReplacement(false)
+        .load().migrate();
+  }
+```
+
+36곳의 호출을 기계적으로 치환한다. 손으로 고치지 않는다.
+
+```bash
+perl -0pi -e 's/Flyway\.configure\(\)\.dataSource\(dataSource\(\)\)\s*\.locations\("classpath:db\/migration"\)\.load\(\)\.migrate\(\);/migrate();/g' \
+  /d/workspace/dpa/devpath-shared/src/test/java/ai/devpath/shared/db/FlywayMigrationTest.java
+```
+
+치환 결과를 확인한다.
+
+```bash
+grep -c "Flyway.configure()" /d/workspace/dpa/devpath-shared/src/test/java/ai/devpath/shared/db/FlywayMigrationTest.java
+grep -c "^    migrate();" /d/workspace/dpa/devpath-shared/src/test/java/ai/devpath/shared/db/FlywayMigrationTest.java
+```
+
+Expected: `Flyway.configure()` **1**건(헬퍼 안에만) · `migrate();` **36**건.
 
 - [ ] **Step 6: 테스트가 green이 되는 것을 확인한다**
 
