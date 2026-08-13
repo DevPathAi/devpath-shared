@@ -25,10 +25,25 @@ class FlywayMigrationTest {
     return ds;
   }
 
+  /**
+   * 모든 테스트가 같은 설정으로 마이그레이션한다.
+   *
+   * <p>placeholderReplacement 를 끈다: 시드 콘텐츠에 JS·Dart 템플릿 리터럴
+   * ({@code ${response.status}}, {@code ${count}} 등)이 정상적인 코드 예시로 들어 있는데,
+   * Flyway 는 기본값에서 이것을 치환 대상 placeholder 로 해석해 파싱에 실패한다.
+   * 운영 이미지도 Dockerfile.migration 의 FLYWAY_PLACEHOLDER_REPLACEMENT=false 로
+   * 같은 설정을 쓴다.
+   */
+  private static void migrate() {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration")
+        .placeholderReplacement(false)
+        .load().migrate();
+  }
+
   @Test
   void migrationsApplyAndCommonFunctionExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var st = c.createStatement();
         var rs = st.executeQuery("SELECT proname FROM pg_proc WHERE proname = 'set_updated_at'")) {
@@ -38,8 +53,7 @@ class FlywayMigrationTest {
 
   @Test
   void usersAndDormantArchivesExist() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "%", new String[] {"TABLE"})) {
       var names = new java.util.HashSet<String>();
@@ -60,8 +74,7 @@ class FlywayMigrationTest {
 
   @Test
   void usersHasAuthColumnsAndDropsGithubId() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     var cols = columns("users");
     assertTrue(cols.contains("email"), "users.email 필요");
     assertTrue(cols.contains("nickname"), "users.nickname 필요");
@@ -72,8 +85,7 @@ class FlywayMigrationTest {
 
   @Test
   void oauthIdentitiesTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "user_oauth_identities", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "user_oauth_identities 테이블 필요");
@@ -82,8 +94,7 @@ class FlywayMigrationTest {
 
   @Test
   void userProfilesTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "user_profiles", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "user_profiles 테이블 필요");
@@ -92,8 +103,7 @@ class FlywayMigrationTest {
 
   @Test
   void outboxTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "outbox", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "outbox 테이블 필요");
@@ -102,8 +112,7 @@ class FlywayMigrationTest {
 
   @Test
   void notificationsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "notifications", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "notifications 테이블 필요");
@@ -112,8 +121,7 @@ class FlywayMigrationTest {
 
   @Test
   void questionBankTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "question_bank", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "question_bank 테이블 필요");
@@ -122,8 +130,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessments", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessments 테이블 필요");
@@ -132,8 +139,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentItemsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessment_items", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessment_items 테이블 필요");
@@ -142,8 +148,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentResultsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessment_results", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessment_results 테이블 필요");
@@ -152,8 +157,7 @@ class FlywayMigrationTest {
 
   @Test
   void questionBankRejectsBadEnumAndRange() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       assertThrows(java.sql.SQLException.class, () ->
         st.execute("INSERT INTO question_bank(track,question_type,content,answer_key,bloom_level,difficulty) "
@@ -166,8 +170,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentsHasNoUserFk() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       // user_id 교차서비스 FK 제거(서비스 경계): 존재하지 않는 user_id로도 INSERT 가능해야 한다.
       st.execute("INSERT INTO assessments(user_id, track) VALUES (999999999, 'BACKEND_SPRING')");
@@ -177,8 +180,7 @@ class FlywayMigrationTest {
 
   @Test
   void vectorExtensionAndPathTablesExist() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = st.executeQuery("SELECT 1 FROM pg_extension WHERE extname = 'vector'")) {
         assertTrue(rs.next(), "vector 확장 필요");
@@ -216,8 +218,7 @@ class FlywayMigrationTest {
 
   @Test
   void contentEmbeddingsCosineSmoke() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long cid;
       try (var rs = st.executeQuery("INSERT INTO contents(slug,title,track,content_md) "
@@ -240,8 +241,7 @@ class FlywayMigrationTest {
 
   @Test
   void learningPathsActiveUserUniqueEnforced() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long uid = System.nanoTime();
       st.execute("INSERT INTO learning_paths(user_id,track,status) VALUES (" + uid
@@ -255,8 +255,7 @@ class FlywayMigrationTest {
 
   @Test
   void userContentProgressTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "user_content_progress",
           new String[] {"TABLE"})) {
@@ -298,8 +297,7 @@ class FlywayMigrationTest {
 
   @Test
   void userContentProgressConstraintsAndCascadeWork() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = System.nanoTime();
       long contentId;
@@ -336,8 +334,7 @@ class FlywayMigrationTest {
 
   @Test
   void userContentProgressHasNoUserForeignKeyAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long contentId;
@@ -372,8 +369,7 @@ class FlywayMigrationTest {
 
   @Test
   void sandboxSessionsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "sandbox_sessions",
           new String[] {"TABLE"})) {
@@ -404,8 +400,7 @@ class FlywayMigrationTest {
 
   @Test
   void sandboxSessionsHasNoUserFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long sid;
@@ -431,8 +426,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiCodeReviewsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "ai_code_reviews",
           new String[] {"TABLE"})) {
@@ -478,8 +472,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiCodeReviewsNoUserFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long reviewId;
@@ -505,8 +498,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiMentorSessionsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "ai_mentor_sessions",
           new String[] {"TABLE"})) {
@@ -551,8 +543,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiMentorSessionsNoUserFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long sessionId;
@@ -578,8 +569,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityPostsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       var cols = columns("community_posts");
       for (String col : new String[] {"id", "author_id", "board_type", "title", "body_md",
@@ -606,8 +596,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityQnaTablesAndVotesContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       for (String t : new String[] {"community_questions", "community_answers",
           "community_votes", "community_tags", "community_post_tags", "community_ai_answers"}) {
@@ -634,8 +623,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityQuestionEmbeddingVectorAndAiAnswerIdempotency() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       // question_embedding은 VECTOR(768)
       try (var rs = st.executeQuery(
@@ -667,8 +655,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityNoAuthorFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long authorId = 999_999_000L + (System.nanoTime() % 100_000L);
       long pid;
@@ -691,8 +678,7 @@ class FlywayMigrationTest {
 
   @Test
   void questionBankSeeded() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery("SELECT count(*) FROM question_bank")) {
       assertTrue(rs.next(), "count 결과 필요");
@@ -702,8 +688,7 @@ class FlywayMigrationTest {
 
   @Test
   void contentsSeeded() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery("SELECT count(*) FROM contents")) {
       assertTrue(rs.next(), "count 결과 필요");
@@ -721,8 +706,7 @@ class FlywayMigrationTest {
    */
   @Test
   void adSlotConfigSeedsThreeSlots() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery("SELECT slot FROM ad_slot_config ORDER BY slot")) {
       var slots = new java.util.ArrayList<String>();
@@ -736,13 +720,134 @@ class FlywayMigrationTest {
   /** 슬롯·소스 CHECK 제약이 카탈로그 밖의 값을 막아야 한다. */
   @Test
   void adSlotConfigRejectsUnknownSlotAndSource() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       assertThrows(java.sql.SQLException.class, () ->
           st.execute("INSERT INTO ad_slot_config(slot,source) VALUES ('SIDEBAR','HOUSE')"));
       assertThrows(java.sql.SQLException.class, () ->
           st.execute("INSERT INTO ad_slot_config(slot,source) VALUES ('DASHBOARD_TOP','BANNERFLOW')"));
+    }
+  }
+
+  /**
+   * 시드 문항의 품질. 개수만 보던 questionBankSeeded()가 놓친 것을 잡는다.
+   *
+   * <p>2026-08-13 사고: 운영에 적재된 500문항이 전부 같은 영어 템플릿이었고
+   * 선택지 4개가 500문항에서 동일했다(정답 인덱스만 무작위). 개수 단언은 통과했다.
+   */
+  @Test
+  void questionBankSeedIsKorean() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT count(*) AS total,"
+              + " count(*) FILTER (WHERE content ~ '[가-힣]') AS korean,"
+              + " count(*) FILTER (WHERE content LIKE '%Which option best applies%') AS template,"
+              + " count(*) FILTER (WHERE content LIKE '%DevPath%') AS old_brand"
+              + " FROM question_bank")) {
+        assertTrue(rs.next(), "집계 결과 필요");
+        long total = rs.getLong("total");
+        assertTrue(total >= 500, "문항은 500개 이상이어야 한다 (실제: " + total + ")");
+        // 같은 DB 를 쓰는 다른 테스트가 픽스처 행을 남길 수 있으므로 "전부"가 아니라
+        // "시드 분량 이상"으로 단언한다. 시드 500개 중 하나라도 한국어가 아니면
+        // korean < 500 이 되어 잡힌다.
+        assertTrue(rs.getLong("korean") >= 500,
+            "한국어 문항이 500개 이상이어야 한다 (한국어: " + rs.getLong("korean") + " / " + total + ")");
+        assertTrue(rs.getLong("template") == 0,
+            "제네릭 영어 템플릿 문항이 남아 있으면 안 된다 (실제: " + rs.getLong("template") + ")");
+        assertTrue(rs.getLong("old_brand") == 0,
+            "폐기된 브랜드 DevPath가 노출되면 안 된다 (실제: " + rs.getLong("old_brand") + ")");
+      }
+      // 선택지가 모든 문항에서 동일했던 것이 이번 사고의 본질이다.
+      try (var rs = st.executeQuery(
+          "SELECT count(DISTINCT options::text) AS distinct_options FROM question_bank")) {
+        assertTrue(rs.next(), "집계 결과 필요");
+        long distinct = rs.getLong("distinct_options");
+        assertTrue(distinct >= 450,
+            "서로 다른 선택지 조합이 450개 이상이어야 한다 (실제: " + distinct + ")");
+      }
+    }
+  }
+
+  /** 시드 콘텐츠의 품질. 문항과 같은 사고가 콘텐츠 150개에도 있었다. */
+  @Test
+  void contentSeedIsKorean() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement();
+        var rs = st.executeQuery(
+            "SELECT count(*) AS total,"
+                + " count(*) FILTER (WHERE content_md ~ '[가-힣]') AS korean,"
+                + " count(*) FILTER (WHERE content_md LIKE '%DevPath%') AS old_brand"
+                + " FROM contents")) {
+      assertTrue(rs.next(), "집계 결과 필요");
+      long total = rs.getLong("total");
+      assertTrue(total >= 150, "콘텐츠는 150개 이상이어야 한다 (실제: " + total + ")");
+      // 이 파일의 다른 테스트가 contents 에 픽스처 행('smoke-…'·'ucp-…', 본문 'm')을
+      // 넣고 지운다. 그 테스트가 중간에 실패하면 행이 남으므로 "전부"로 단언하지 않는다.
+      assertTrue(rs.getLong("korean") >= 150,
+          "한국어 콘텐츠가 150개 이상이어야 한다 (한국어: " + rs.getLong("korean") + " / " + total + ")");
+      assertTrue(rs.getLong("old_brand") == 0,
+          "폐기된 브랜드 DevPath가 노출되면 안 된다 (실제: " + rs.getLong("old_brand") + ")");
+    }
+  }
+
+  /**
+   * RAG 임베딩 시드. 운영은 0건이었다(옛 마이그레이션이 임베딩을 제외했다).
+   * 모든 행이 같은 벡터인 경우를 함께 막는다 — 그러면 유사도 검색이 무의미해진다.
+   */
+  @Test
+  void contentEmbeddingsSeeded() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT count(*) AS total, count(DISTINCT embedding::text) AS distinct_vec"
+              + " FROM content_embeddings")) {
+        assertTrue(rs.next(), "집계 결과 필요");
+        long total = rs.getLong("total");
+        assertTrue(total >= 238, "임베딩은 238건 이상 시드되어야 한다 (실제: " + total + ")");
+        // 모든 행이 같은 벡터면 유사도 검색이 무의미해진다.
+        // contentEmbeddingsCosineSmoke 가 남길 수 있는 픽스처 1행을 감안해 >= 로 둔다.
+        assertTrue(rs.getLong("distinct_vec") >= 238,
+            "서로 다른 임베딩 벡터가 238개 이상이어야 한다 (서로 다른 값: "
+                + rs.getLong("distinct_vec") + " / " + total + ")");
+      }
+      // slug 가 어긋나면 에러 없이 0행이 들어간다. 임베딩이 붙은 콘텐츠 수도 함께 본다.
+      try (var rs2 = st.executeQuery(
+          "SELECT count(DISTINCT content_id) AS covered FROM content_embeddings")) {
+        assertTrue(rs2.next(), "집계 결과 필요");
+        assertTrue(rs2.getLong("covered") >= 100,
+            "임베딩이 붙은 콘텐츠가 100개 이상이어야 한다 (실제: " + rs2.getLong("covered") + ")");
+      }
+    }
+  }
+
+  /**
+   * 소비 서비스 경로 회귀 가드.
+   *
+   * <p>shared 의 마이그레이션 SQL 은 jar 에 실려 서비스 레포 테스트에서
+   * spring.flyway 기본 설정(placeholder-replacement=true)으로 실행된다.
+   * Dockerfile.migration·build.gradle.kts·이 파일의 migrate() 헬퍼는 그 경로에 닿지 않는다.
+   * 시드 콘텐츠의 ${...}(JS·Dart 템플릿 리터럴)를 견디는 것은 마이그레이션 옆의
+   * 스크립트 설정 파일뿐이다. 그 파일이 사라지거나, 새 마이그레이션이 ${...} 를
+   * 스크립트 설정 없이 들여오면 이 테스트가 red 가 된다.
+   */
+  @Test
+  void migrationsWithPlaceholderSyntaxCarryScriptConfig() throws Exception {
+    var dir = java.nio.file.Path.of("src/main/resources/db/migration");
+    try (var paths = java.nio.file.Files.list(dir)) {
+      for (var sql : paths.filter(p -> p.toString().endsWith(".sql")).toList()) {
+        String body = java.nio.file.Files.readString(sql, java.nio.charset.StandardCharsets.UTF_8);
+        if (!body.contains("${")) {
+          continue;
+        }
+        var conf = sql.resolveSibling(sql.getFileName() + ".conf");
+        assertTrue(java.nio.file.Files.exists(conf),
+            sql.getFileName() + " 는 ${...} 를 담고 있으므로 " + conf.getFileName() + " 가 필요하다");
+        assertTrue(
+            java.nio.file.Files.readString(conf, java.nio.charset.StandardCharsets.UTF_8)
+                .contains("placeholderReplacement=false"),
+            conf.getFileName() + " 는 placeholderReplacement=false 를 담아야 한다");
+      }
     }
   }
 }

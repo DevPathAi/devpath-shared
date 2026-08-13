@@ -67,6 +67,9 @@ flyway {
 	user = "devpath"
 	password = "localdev"
 	locations = arrayOf("classpath:db/migration")
+	// 시드 콘텐츠의 JS·Dart 템플릿 리터럴(${...})을 placeholder 로 해석하지 않는다.
+	// Dockerfile.migration·FlywayMigrationTest 와 같은 설정이다.
+	placeholderReplacement = false
 }
 
 // GitHub Packages 배포. 인증은 CI의 GITHUB_TOKEN(자동) 또는 로컬 환경변수로 주입한다.
