@@ -320,7 +320,7 @@ Expected:
 > OFF → Successfully applied 43 migrations to schema "public", now at version v202608131001
 > ```
 >
-> 기존 마이그레이션 39개 중 `${` 를 쓰는 것은 **0건**이라 치환을 꺼도 잃는 기능이 없다.
+> 기존 마이그레이션 42개 중 `${` 를 쓰는 것은 **0건**이라 치환을 꺼도 잃는 기능이 없다.
 
 `Dockerfile.migration` 에 환경변수 한 줄을 추가한다. 설정이 SQL 과 같은 레포에서 함께 이동하므로
 gitops 변경이나 별도 릴리스가 필요 없다.

@@ -798,18 +798,56 @@ class FlywayMigrationTest {
   @Test
   void contentEmbeddingsSeeded() throws Exception {
     migrate();
-    try (var c = dataSource().getConnection(); var st = c.createStatement();
-        var rs = st.executeQuery(
-            "SELECT count(*) AS total, count(DISTINCT embedding::text) AS distinct_vec"
-                + " FROM content_embeddings")) {
-      assertTrue(rs.next(), "집계 결과 필요");
-      long total = rs.getLong("total");
-      assertTrue(total >= 200, "임베딩은 200건 이상 시드되어야 한다 (실제: " + total + ")");
-      // 모든 행이 같은 벡터면 유사도 검색이 무의미해진다.
-      // contentEmbeddingsCosineSmoke 가 남길 수 있는 픽스처 1행을 감안해 >= 로 둔다.
-      assertTrue(rs.getLong("distinct_vec") >= 200,
-          "서로 다른 임베딩 벡터가 200개 이상이어야 한다 (서로 다른 값: "
-              + rs.getLong("distinct_vec") + " / " + total + ")");
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT count(*) AS total, count(DISTINCT embedding::text) AS distinct_vec"
+              + " FROM content_embeddings")) {
+        assertTrue(rs.next(), "집계 결과 필요");
+        long total = rs.getLong("total");
+        assertTrue(total >= 238, "임베딩은 238건 이상 시드되어야 한다 (실제: " + total + ")");
+        // 모든 행이 같은 벡터면 유사도 검색이 무의미해진다.
+        // contentEmbeddingsCosineSmoke 가 남길 수 있는 픽스처 1행을 감안해 >= 로 둔다.
+        assertTrue(rs.getLong("distinct_vec") >= 238,
+            "서로 다른 임베딩 벡터가 238개 이상이어야 한다 (서로 다른 값: "
+                + rs.getLong("distinct_vec") + " / " + total + ")");
+      }
+      // slug 가 어긋나면 에러 없이 0행이 들어간다. 임베딩이 붙은 콘텐츠 수도 함께 본다.
+      try (var rs2 = st.executeQuery(
+          "SELECT count(DISTINCT content_id) AS covered FROM content_embeddings")) {
+        assertTrue(rs2.next(), "집계 결과 필요");
+        assertTrue(rs2.getLong("covered") >= 100,
+            "임베딩이 붙은 콘텐츠가 100개 이상이어야 한다 (실제: " + rs2.getLong("covered") + ")");
+      }
+    }
+  }
+
+  /**
+   * 소비 서비스 경로 회귀 가드.
+   *
+   * <p>shared 의 마이그레이션 SQL 은 jar 에 실려 서비스 레포 테스트에서
+   * spring.flyway 기본 설정(placeholder-replacement=true)으로 실행된다.
+   * Dockerfile.migration·build.gradle.kts·이 파일의 migrate() 헬퍼는 그 경로에 닿지 않는다.
+   * 시드 콘텐츠의 ${...}(JS·Dart 템플릿 리터럴)를 견디는 것은 마이그레이션 옆의
+   * 스크립트 설정 파일뿐이다. 그 파일이 사라지거나, 새 마이그레이션이 ${...} 를
+   * 스크립트 설정 없이 들여오면 이 테스트가 red 가 된다.
+   */
+  @Test
+  void migrationsWithPlaceholderSyntaxCarryScriptConfig() throws Exception {
+    var dir = java.nio.file.Path.of("src/main/resources/db/migration");
+    try (var paths = java.nio.file.Files.list(dir)) {
+      for (var sql : paths.filter(p -> p.toString().endsWith(".sql")).toList()) {
+        String body = java.nio.file.Files.readString(sql, java.nio.charset.StandardCharsets.UTF_8);
+        if (!body.contains("${")) {
+          continue;
+        }
+        var conf = sql.resolveSibling(sql.getFileName() + ".conf");
+        assertTrue(java.nio.file.Files.exists(conf),
+            sql.getFileName() + " 는 ${...} 를 담고 있으므로 " + conf.getFileName() + " 가 필요하다");
+        assertTrue(
+            java.nio.file.Files.readString(conf, java.nio.charset.StandardCharsets.UTF_8)
+                .contains("placeholderReplacement=false"),
+            conf.getFileName() + " 는 placeholderReplacement=false 를 담아야 한다");
+      }
     }
   }
 }

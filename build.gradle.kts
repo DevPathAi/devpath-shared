@@ -67,7 +67,7 @@ flyway {
 	user = "devpath"
 	password = "localdev"
 	locations = arrayOf("classpath:db/migration")
-	// 시드 콘텐츠의 JS·Dart 템플릿 리터럴(${'$'}{...})을 placeholder 로 해석하지 않는다.
+	// 시드 콘텐츠의 JS·Dart 템플릿 리터럴(${...})을 placeholder 로 해석하지 않는다.
 	// Dockerfile.migration·FlywayMigrationTest 와 같은 설정이다.
 	placeholderReplacement = false
 }

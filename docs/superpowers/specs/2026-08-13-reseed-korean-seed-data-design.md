@@ -149,6 +149,40 @@ INSERT INTO content_embeddings (...) SELECT ... FROM contents c WHERE c.slug = '
 
 임계값 450은 실측 496에 여유를 둔 값이다. 중복 선택지가 50개를 넘으면 출제 품질 문제로 본다.
 
+### Flyway placeholder 치환 — 네 개의 실행 경로
+
+승인된 한국어 콘텐츠에는 JS·Dart 템플릿 리터럴이 **정상적인 코드 예시**로 들어 있다
+(`${response.status}`·`${count}`·`${bloc.count}`·`${maven.build.timestamp}` 등 31줄/33회).
+Flyway 는 기본값(`placeholderReplacement=true`)에서 이것을 치환 대상으로 해석해 파싱에 실패한다.
+기존 마이그레이션 42개 중 `${` 를 쓰는 것은 0건이라 지금까지 드러나지 않았다.
+
+이 SQL 이 실행되는 경로는 **넷**이다.
+
+| 경로 | 어디서 | 설정 |
+|---|---|---|
+| 운영 마이그레이션 잡 | `flyway/flyway:11-alpine` CLI | `Dockerfile.migration` 의 `ENV FLYWAY_PLACEHOLDER_REPLACEMENT=false` |
+| shared 테스트 | `FlywayMigrationTest` | `migrate()` 헬퍼의 `.placeholderReplacement(false)` |
+| 로컬 Gradle | `./gradlew flywayMigrate` | `build.gradle.kts` 의 `flyway { placeholderReplacement = false }` |
+| **소비 서비스 테스트** | 7개 svc 의 `spring.flyway`(`classpath:db/migration`) | **스크립트 설정 파일** |
+
+네 번째가 결정적이다. SQL 은 `src/main/resources` 아래라 **jar 에 실려** 소비 서비스 테스트에서
+`spring.flyway` **기본 설정**으로 실행된다. 소비 레포에는 자체 마이그레이션도 placeholder 설정도 없다.
+앞의 세 설정은 이 경로에 닿지 않는다.
+
+그래서 마이그레이션 옆에 스크립트 설정 파일을 둔다.
+
+```
+src/main/resources/db/migration/V202608131001__reseed_korean_seed_data.sql.conf
+placeholderReplacement=false
+```
+
+이 파일은 `src/main/resources` 아래이므로 jar·도커 이미지·클래스패스에 함께 실려 **네 경로를 모두 덮는다.**
+운영과 같은 `flyway/flyway:11-alpine` 이미지에서 환경변수 없이 이 파일만으로 43개 마이그레이션이
+전부 적용되는 것을 실증했다.
+
+`FlywayMigrationTest.migrationsWithPlaceholderSyntaxCarryScriptConfig()` 가 이 규약을 강제한다 —
+`${...}` 를 담은 마이그레이션에 짝이 되는 `.conf` 가 없으면 red 다.
+
 ## 운영 영향
 
 | 테이블 | 운영 행수 | 이 마이그레이션의 영향 |
@@ -162,6 +196,7 @@ INSERT INTO content_embeddings (...) SELECT ... FROM contents c WHERE c.slug = '
 | `content_embeddings` | 0 | **238건 신규 적재** (이월돼 있던 백필 해소) |
 | `user_content_progress` | 0 | 실제 삭제 없음 |
 | `sandbox_sessions` | 0 | 영향 없음 |
+| `ai_mentor_sessions.content_id` | 미측정 | FK 없는 논리 참조 — 교체 후 고아 참조가 된다(id 재사용 없음, 오염 아님) |
 
 지워지는 이력은 **무의미한 문항으로 산출된 본인 테스트 결과**뿐이고, 그로부터 파생된
 학습 경로는 존재하지 않는다.
@@ -174,6 +209,16 @@ INSERT INTO content_embeddings (...) SELECT ... FROM contents c WHERE c.slug = '
 2. `./gradlew test` 전체 통과
 3. 배포 후 운영 DB에서 한국어 문항 수·템플릿 0건·`DevPath` 0건·임베딩 238건 실측
 4. 앱에서 진단 1회 실행해 한국어 문항이 나오는지 육안 확인
+5. **잡 실행 직전 재측정 게이트.** 아래 「운영 영향」 표는 2026-08-13 실측이다. 머지와 배포 사이에
+   이용자가 학습 경로를 생성하거나 콘텐츠를 열면 그 행이 CASCADE 로 **조용히 사라진다.**
+   잡을 돌리기 직전에 네 값을 다시 재고, 0 이 아니면 멈추고 판단한다.
+
+   ```sql
+   SELECT (SELECT count(*) FROM learning_paths)        AS learning_paths,
+          (SELECT count(*) FROM user_content_progress) AS progress,
+          (SELECT count(*) FROM assessments)           AS assessments,
+          (SELECT count(*) FROM content_embeddings)    AS embeddings;
+   ```
 
 ## 배포
 
