@@ -59,6 +59,29 @@ INSERT INTO question_bank (track, question_type, content, options, answer_key, b
 INSERT INTO contents (slug, title, track, content_md, estimated_minutes, difficulty, bloom_level, concept_tags, status) VALUES
 ```
 
+### RAG 임베딩도 함께 적재한다
+
+`content_md2_seed.sql`(2.1MB)은 단일 INSERT 가 아니다. **`contents` 1건 + `content_embeddings` 238건**이
+들어 있고, 각 임베딩은 `SELECT c.id ... FROM contents c WHERE c.slug = '...'` 로 방금 삽입한
+콘텐츠를 찾아 붙는다.
+
+기존 운영 마이그레이션 `V202607281002`는 "임베딩은 제외(후속 Ollama 백필)"라며 뺐고,
+그래서 **운영 `content_embeddings` 가 0건**이다. 콘텐츠 유사도 검색이 동작하지 않는 상태다.
+
+임베딩은 합성 픽스처가 아니라 실제 값임을 확인했다.
+
+| 확인 | 값 |
+|---|---|
+| 행수 | 238 |
+| 차원 | 768 (`VECTOR(768)` 컬럼과 일치) |
+| 서로 다른 벡터 | 238 / 238 |
+| 표준편차(행0) | 0.726 |
+| 생성 모델 | `nomic-embed-text` (`tools/content-gen/README.md`) |
+| 런타임 모델 | `nomic-embed-text` (`ai-svc` `embed-model` 기본값) |
+
+생성 모델과 런타임 질의 모델이 같으므로 시드 벡터와 런타임 벡터가 같은 공간에 있다.
+이 마이그레이션이 이월돼 있던 "임베딩 백필"을 함께 해소한다.
+
 원본 실측값:
 
 | 항목 | 값 |
@@ -89,6 +112,7 @@ INSERT INTO question_bank (...) VALUES ...;   -- 한국어 500
 
 DELETE FROM contents;         -- → content_embeddings · user_content_progress (CASCADE)
 INSERT INTO contents (...) VALUES ...;        -- 한국어 150
+INSERT INTO content_embeddings (...) SELECT ... FROM contents c WHERE c.slug = '...';  -- 238건
 ```
 
 **`IF count = 0` 가드를 쓰지 않는다.** 기존 시드 마이그레이션에는 그 가드가 있는데,
@@ -110,6 +134,8 @@ INSERT INTO contents (...) VALUES ...;        -- 한국어 150
 | | 서로 다른 `options` 조합 ≥ 450 |
 | `contents` | 본문에 한글이 있는 행 = 전체 행 |
 | | `DevPath` 를 포함한 행 0 |
+| `content_embeddings` | 행수 ≥ 200 |
+| | 서로 다른 `embedding` 값 = 전체 행 (모두 같은 벡터를 넣는 사고 탐지) |
 
 「서로 다른 options 조합」이 이번 사고의 본질을 직접 겨냥한다 — 옛 시드는 500문항이
 선택지 1종을 공유했다. 개수·언어만 봐서는 그 상태를 잡지 못한다.
@@ -126,7 +152,7 @@ INSERT INTO contents (...) VALUES ...;        -- 한국어 150
 | `question_bank` | 500 | 교체 |
 | `contents` | 150 | 교체 |
 | `learning_paths` | 0 | 실제 삭제 없음 |
-| `content_embeddings` | 0 | 실제 삭제 없음 |
+| `content_embeddings` | 0 | **238건 신규 적재** (이월돼 있던 백필 해소) |
 | `user_content_progress` | 0 | 실제 삭제 없음 |
 | `sandbox_sessions` | 0 | 영향 없음 |
 
@@ -139,7 +165,7 @@ INSERT INTO contents (...) VALUES ...;        -- 한국어 150
 
 1. **TDD**: 품질 단언을 먼저 추가하고 로컬 postgres에서 red 확인 → 마이그레이션 추가 → green
 2. `./gradlew test` 전체 통과
-3. 배포 후 운영 DB에서 한국어 문항 수·템플릿 0건·`DevPath` 0건 실측
+3. 배포 후 운영 DB에서 한국어 문항 수·템플릿 0건·`DevPath` 0건·임베딩 238건 실측
 4. 앱에서 진단 1회 실행해 한국어 문항이 나오는지 육안 확인
 
 ## 배포
