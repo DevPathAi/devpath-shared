@@ -25,10 +25,25 @@ class FlywayMigrationTest {
     return ds;
   }
 
+  /**
+   * 모든 테스트가 같은 설정으로 마이그레이션한다.
+   *
+   * <p>placeholderReplacement 를 끈다: 시드 콘텐츠에 JS·Dart 템플릿 리터럴
+   * ({@code ${response.status}}, {@code ${count}} 등)이 정상적인 코드 예시로 들어 있는데,
+   * Flyway 는 기본값에서 이것을 치환 대상 placeholder 로 해석해 파싱에 실패한다.
+   * 운영 이미지도 Dockerfile.migration 의 FLYWAY_PLACEHOLDER_REPLACEMENT=false 로
+   * 같은 설정을 쓴다.
+   */
+  private static void migrate() {
+    Flyway.configure().dataSource(dataSource())
+        .locations("classpath:db/migration")
+        .placeholderReplacement(false)
+        .load().migrate();
+  }
+
   @Test
   void migrationsApplyAndCommonFunctionExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var st = c.createStatement();
         var rs = st.executeQuery("SELECT proname FROM pg_proc WHERE proname = 'set_updated_at'")) {
@@ -38,8 +53,7 @@ class FlywayMigrationTest {
 
   @Test
   void usersAndDormantArchivesExist() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "%", new String[] {"TABLE"})) {
       var names = new java.util.HashSet<String>();
@@ -60,8 +74,7 @@ class FlywayMigrationTest {
 
   @Test
   void usersHasAuthColumnsAndDropsGithubId() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     var cols = columns("users");
     assertTrue(cols.contains("email"), "users.email 필요");
     assertTrue(cols.contains("nickname"), "users.nickname 필요");
@@ -72,8 +85,7 @@ class FlywayMigrationTest {
 
   @Test
   void oauthIdentitiesTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "user_oauth_identities", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "user_oauth_identities 테이블 필요");
@@ -82,8 +94,7 @@ class FlywayMigrationTest {
 
   @Test
   void userProfilesTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "user_profiles", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "user_profiles 테이블 필요");
@@ -92,8 +103,7 @@ class FlywayMigrationTest {
 
   @Test
   void outboxTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "outbox", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "outbox 테이블 필요");
@@ -102,8 +112,7 @@ class FlywayMigrationTest {
 
   @Test
   void notificationsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "notifications", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "notifications 테이블 필요");
@@ -112,8 +121,7 @@ class FlywayMigrationTest {
 
   @Test
   void questionBankTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "question_bank", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "question_bank 테이블 필요");
@@ -122,8 +130,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessments", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessments 테이블 필요");
@@ -132,8 +139,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentItemsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessment_items", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessment_items 테이블 필요");
@@ -142,8 +148,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentResultsTableExists() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessment_results", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessment_results 테이블 필요");
@@ -152,8 +157,7 @@ class FlywayMigrationTest {
 
   @Test
   void questionBankRejectsBadEnumAndRange() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       assertThrows(java.sql.SQLException.class, () ->
         st.execute("INSERT INTO question_bank(track,question_type,content,answer_key,bloom_level,difficulty) "
@@ -166,8 +170,7 @@ class FlywayMigrationTest {
 
   @Test
   void assessmentsHasNoUserFk() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       // user_id 교차서비스 FK 제거(서비스 경계): 존재하지 않는 user_id로도 INSERT 가능해야 한다.
       st.execute("INSERT INTO assessments(user_id, track) VALUES (999999999, 'BACKEND_SPRING')");
@@ -177,8 +180,7 @@ class FlywayMigrationTest {
 
   @Test
   void vectorExtensionAndPathTablesExist() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = st.executeQuery("SELECT 1 FROM pg_extension WHERE extname = 'vector'")) {
         assertTrue(rs.next(), "vector 확장 필요");
@@ -216,8 +218,7 @@ class FlywayMigrationTest {
 
   @Test
   void contentEmbeddingsCosineSmoke() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long cid;
       try (var rs = st.executeQuery("INSERT INTO contents(slug,title,track,content_md) "
@@ -240,8 +241,7 @@ class FlywayMigrationTest {
 
   @Test
   void learningPathsActiveUserUniqueEnforced() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long uid = System.nanoTime();
       st.execute("INSERT INTO learning_paths(user_id,track,status) VALUES (" + uid
@@ -255,8 +255,7 @@ class FlywayMigrationTest {
 
   @Test
   void userContentProgressTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "user_content_progress",
           new String[] {"TABLE"})) {
@@ -298,8 +297,7 @@ class FlywayMigrationTest {
 
   @Test
   void userContentProgressConstraintsAndCascadeWork() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = System.nanoTime();
       long contentId;
@@ -336,8 +334,7 @@ class FlywayMigrationTest {
 
   @Test
   void userContentProgressHasNoUserForeignKeyAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long contentId;
@@ -372,8 +369,7 @@ class FlywayMigrationTest {
 
   @Test
   void sandboxSessionsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "sandbox_sessions",
           new String[] {"TABLE"})) {
@@ -404,8 +400,7 @@ class FlywayMigrationTest {
 
   @Test
   void sandboxSessionsHasNoUserFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long sid;
@@ -431,8 +426,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiCodeReviewsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "ai_code_reviews",
           new String[] {"TABLE"})) {
@@ -478,8 +472,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiCodeReviewsNoUserFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long reviewId;
@@ -505,8 +498,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiMentorSessionsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = c.getMetaData().getTables(null, "public", "ai_mentor_sessions",
           new String[] {"TABLE"})) {
@@ -551,8 +543,7 @@ class FlywayMigrationTest {
 
   @Test
   void aiMentorSessionsNoUserFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long userId = 999_999_000L + (System.nanoTime() % 100_000L);
       long sessionId;
@@ -578,8 +569,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityPostsTableContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       var cols = columns("community_posts");
       for (String col : new String[] {"id", "author_id", "board_type", "title", "body_md",
@@ -606,8 +596,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityQnaTablesAndVotesContract() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       for (String t : new String[] {"community_questions", "community_answers",
           "community_votes", "community_tags", "community_post_tags", "community_ai_answers"}) {
@@ -634,8 +623,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityQuestionEmbeddingVectorAndAiAnswerIdempotency() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       // question_embedding은 VECTOR(768)
       try (var rs = st.executeQuery(
@@ -667,8 +655,7 @@ class FlywayMigrationTest {
 
   @Test
   void communityNoAuthorFkAndUpdatedAtTrigger() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       long authorId = 999_999_000L + (System.nanoTime() % 100_000L);
       long pid;
@@ -691,8 +678,7 @@ class FlywayMigrationTest {
 
   @Test
   void questionBankSeeded() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery("SELECT count(*) FROM question_bank")) {
       assertTrue(rs.next(), "count 결과 필요");
@@ -702,8 +688,7 @@ class FlywayMigrationTest {
 
   @Test
   void contentsSeeded() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery("SELECT count(*) FROM contents")) {
       assertTrue(rs.next(), "count 결과 필요");
@@ -721,8 +706,7 @@ class FlywayMigrationTest {
    */
   @Test
   void adSlotConfigSeedsThreeSlots() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery("SELECT slot FROM ad_slot_config ORDER BY slot")) {
       var slots = new java.util.ArrayList<String>();
@@ -736,8 +720,7 @@ class FlywayMigrationTest {
   /** 슬롯·소스 CHECK 제약이 카탈로그 밖의 값을 막아야 한다. */
   @Test
   void adSlotConfigRejectsUnknownSlotAndSource() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       assertThrows(java.sql.SQLException.class, () ->
           st.execute("INSERT INTO ad_slot_config(slot,source) VALUES ('SIDEBAR','HOUSE')"));
@@ -754,8 +737,7 @@ class FlywayMigrationTest {
    */
   @Test
   void questionBankSeedIsKorean() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       try (var rs = st.executeQuery(
           "SELECT count(*) AS total,"
@@ -790,8 +772,7 @@ class FlywayMigrationTest {
   /** 시드 콘텐츠의 품질. 문항과 같은 사고가 콘텐츠 150개에도 있었다. */
   @Test
   void contentSeedIsKorean() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery(
             "SELECT count(*) AS total,"
@@ -816,8 +797,7 @@ class FlywayMigrationTest {
    */
   @Test
   void contentEmbeddingsSeeded() throws Exception {
-    Flyway.configure().dataSource(dataSource())
-        .locations("classpath:db/migration").load().migrate();
+    migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement();
         var rs = st.executeQuery(
             "SELECT count(*) AS total, count(DISTINCT embedding::text) AS distinct_vec"
