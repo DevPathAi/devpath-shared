@@ -100,6 +100,15 @@ class AiReviewIdempotencyMigrationTest {
   private static void createPriorSchema(String schema) throws Exception {
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       st.execute("CREATE SCHEMA " + schema);
+      // The review migration follows the sandbox lease migrations in the same
+      // Flyway history. Recreate their prior-version prerequisites so this
+      // partial-schema test exercises the production migration order.
+      st.execute("CREATE TABLE " + schema + ".sandbox_sessions ("
+          + "id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, "
+          + "status VARCHAR(16) NOT NULL, started_at TIMESTAMPTZ NOT NULL DEFAULT now(), "
+          + "finished_at TIMESTAMPTZ, exit_code INT, stderr TEXT, "
+          + "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())");
+      st.execute("CREATE TABLE " + schema + ".outbox (id BIGSERIAL PRIMARY KEY)");
       st.execute("CREATE TABLE " + schema + ".ai_code_reviews ("
           + "id BIGSERIAL PRIMARY KEY, sandbox_session_id BIGINT NOT NULL, "
           + "user_id BIGINT NOT NULL, content_id BIGINT, "
@@ -118,6 +127,7 @@ class AiReviewIdempotencyMigrationTest {
 
   private static void migrate(String schema, String target) {
     var config = Flyway.configure()
+        .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
         .dataSource(dataSource())
         .locations("classpath:db/migration")
         .schemas(schema)
