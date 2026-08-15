@@ -126,7 +126,7 @@ class SandboxLeaseAndAdmissionMigrationTest {
     String schema = temporarySchemaName();
     try {
       createPriorSchema(schema);
-      migrate(schema, "202608161007");
+      migrate(schema, "202608161008");
 
       try (var c = dataSource().getConnection()) {
         Map<String, String> columns = new HashMap<>();
@@ -143,6 +143,17 @@ class SandboxLeaseAndAdmissionMigrationTest {
         assertEquals("uuid", columns.get("reconciliation_token"));
         assertEquals("timestamp with time zone", columns.get("reconciliation_started_at"));
         assertEquals("character varying", columns.get("terminal_source"));
+        try (var ps = c.prepareStatement(
+            "SELECT convalidated FROM pg_constraint "
+                + "WHERE conrelid = (? || '.sandbox_sessions')::regclass "
+                + "AND conname = 'chk_sandbox_terminal_source'")) {
+          ps.setString(1, schema);
+          try (var rs = ps.executeQuery()) {
+            assertTrue(rs.next());
+            assertTrue(rs.getBoolean(1),
+                "terminal source constraint must finish its low-lock validation phase");
+          }
+        }
 
         try (var st = c.createStatement()) {
           st.execute("INSERT INTO " + schema + ".sandbox_sessions"
