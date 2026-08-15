@@ -1,5 +1,6 @@
 package ai.devpath.shared.db;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -134,6 +135,61 @@ class FlywayMigrationTest {
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessments", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessments 테이블 필요");
+    }
+  }
+
+  @Test
+  void assessmentsSourceGuestIdContract() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT data_type, character_maximum_length, is_nullable "
+              + "FROM information_schema.columns "
+              + "WHERE table_schema = 'public' AND table_name = 'assessments' "
+              + "AND column_name = 'source_guest_id'")) {
+        assertTrue(rs.next(), "assessments.source_guest_id 컬럼 필요");
+        assertEquals("character varying", rs.getString("data_type"));
+        assertEquals(36, rs.getInt("character_maximum_length"));
+        assertEquals("YES", rs.getString("is_nullable"));
+        assertFalse(rs.next(), "source_guest_id 컬럼은 하나만 존재해야 한다");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_constraint "
+              + "WHERE conrelid = 'public.assessments'::regclass "
+              + "AND conname = 'uq_assessments_source_guest_id' AND contype = 'u'")) {
+        assertTrue(rs.next(), "source_guest_id DB UNIQUE constraint 필요");
+      }
+
+      c.setAutoCommit(false);
+      try (var insert = c.prepareStatement(
+          "INSERT INTO assessments(source_guest_id, track) VALUES (?, 'BACKEND_SPRING')")) {
+        insert.setNull(1, java.sql.Types.VARCHAR);
+        assertEquals(1, insert.executeUpdate());
+        insert.setNull(1, java.sql.Types.VARCHAR);
+        assertEquals(1, insert.executeUpdate(), "nullable UNIQUE는 NULL 여러 건을 허용해야 한다");
+
+        var firstGuestId = java.util.UUID.randomUUID().toString();
+        var secondGuestId = java.util.UUID.randomUUID().toString();
+        insert.setString(1, firstGuestId);
+        assertEquals(1, insert.executeUpdate());
+
+        var duplicateSavepoint = c.setSavepoint();
+        insert.setString(1, firstGuestId);
+        var duplicate = assertThrows(java.sql.SQLException.class, insert::executeUpdate);
+        assertEquals("23505", duplicate.getSQLState(), "동일 non-null guest ID는 unique violation이어야 한다");
+        c.rollback(duplicateSavepoint);
+
+        insert.setString(1, secondGuestId);
+        assertEquals(1, insert.executeUpdate(), "서로 다른 guest ID는 공존해야 한다");
+
+        var invalidShapeSavepoint = c.setSavepoint();
+        insert.setString(1, "not-a-guest-uuid");
+        var invalidShape = assertThrows(java.sql.SQLException.class, insert::executeUpdate);
+        assertEquals("23514", invalidShape.getSQLState(), "source_guest_id는 UUID 문자열 shape만 허용해야 한다");
+        c.rollback(invalidShapeSavepoint);
+      } finally {
+        c.rollback();
+      }
     }
   }
 
