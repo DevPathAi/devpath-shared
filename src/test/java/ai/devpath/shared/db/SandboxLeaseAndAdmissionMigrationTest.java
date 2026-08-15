@@ -121,6 +121,44 @@ class SandboxLeaseAndAdmissionMigrationTest {
     }
   }
 
+  @Test
+  void terminalReconciliationFenceIsAdditiveAndRejectsUnknownSources() throws Exception {
+    String schema = temporarySchemaName();
+    try {
+      createPriorSchema(schema);
+      migrate(schema, "202608161007");
+
+      try (var c = dataSource().getConnection()) {
+        Map<String, String> columns = new HashMap<>();
+        try (var ps = c.prepareStatement(
+            "SELECT column_name,data_type FROM information_schema.columns "
+                + "WHERE table_schema = ? AND table_name = 'sandbox_sessions' "
+                + "AND column_name IN ('reconciliation_token',"
+                + "'reconciliation_started_at','terminal_source')")) {
+          ps.setString(1, schema);
+          try (var rs = ps.executeQuery()) {
+            while (rs.next()) columns.put(rs.getString(1), rs.getString(2));
+          }
+        }
+        assertEquals("uuid", columns.get("reconciliation_token"));
+        assertEquals("timestamp with time zone", columns.get("reconciliation_started_at"));
+        assertEquals("character varying", columns.get("terminal_source"));
+
+        try (var st = c.createStatement()) {
+          st.execute("INSERT INTO " + schema + ".sandbox_sessions"
+              + "(user_id,language,status,submitted_code,terminal_source) VALUES "
+              + "(8101,'PYTHON','RUNNING','old','RUNNER')");
+          SQLException invalid = assertThrows(SQLException.class, () -> st.execute(
+              "UPDATE " + schema + ".sandbox_sessions "
+                  + "SET terminal_source='UNKNOWN' WHERE user_id=8101"));
+          assertEquals("23514", invalid.getSQLState());
+        }
+      }
+    } finally {
+      dropTemporarySchema(schema);
+    }
+  }
+
   private static void migrate(String schema, String target) {
     Flyway.configure()
         .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
