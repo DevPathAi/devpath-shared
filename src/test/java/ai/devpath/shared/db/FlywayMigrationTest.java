@@ -471,8 +471,8 @@ class FlywayMigrationTest {
       var cols = columns("sandbox_sessions");
       for (String col : new String[] {"id", "user_id", "content_id", "code_block_id",
           "language", "container_id", "status", "submitted_code", "stdout", "stderr",
-          "exit_code", "cpu_ms_used", "memory_mb_peak", "started_at", "finished_at",
-          "created_at", "updated_at"}) {
+          "exit_code", "cpu_ms_used", "memory_mb_peak", "output_truncated", "started_at",
+          "finished_at", "created_at", "updated_at"}) {
         assertTrue(cols.contains(col), "sandbox_sessions." + col + " 컬럼 필요");
       }
 
