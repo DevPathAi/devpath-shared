@@ -7,3 +7,8 @@ COPY src/main/resources/db/migration /flyway/sql
 # Flyway 는 기본값에서 이를 placeholder 로 해석해 파싱에 실패하므로 치환을 끈다.
 # 이 레포의 마이그레이션은 placeholder 를 쓰지 않는다(전수 확인: 0건).
 ENV FLYWAY_PLACEHOLDER_REPLACEMENT=false
+
+# V202608161002 creates PostgreSQL indexes CONCURRENTLY. A transactional
+# Flyway advisory lock keeps an old snapshot open and can make PostgreSQL wait
+# on Flyway's own connection, so use Flyway's session-level lock mode.
+ENV FLYWAY_POSTGRESQL_TRANSACTIONAL_LOCK=false

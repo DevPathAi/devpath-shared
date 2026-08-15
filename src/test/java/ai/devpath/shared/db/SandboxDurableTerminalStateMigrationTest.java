@@ -28,6 +28,7 @@ class SandboxDurableTerminalStateMigrationTest {
       createPriorSchemaWithExistingRows(schema);
 
       Flyway.configure()
+          .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
           .dataSource(dataSource())
           .locations("classpath:db/migration")
           .schemas(schema)
@@ -67,6 +68,7 @@ class SandboxDurableTerminalStateMigrationTest {
       createPriorSchemaWithExistingRows(schema);
 
       Flyway.configure()
+          .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
           .dataSource(dataSource())
           .locations("classpath:db/migration")
           .schemas(schema)
@@ -121,6 +123,20 @@ class SandboxDurableTerminalStateMigrationTest {
               CHECK (language IN ('JAVA','NODE','PYTHON')),
             CONSTRAINT chk_sandbox_status
               CHECK (status IN ('ALLOCATING','RUNNING','COMPLETED','FAILED','KILLED'))
+          )
+          """.formatted(schema));
+      // Later ET8 migrations also evolve the transactional outbox. A baselined
+      // prior schema must include every table that existed at PRIOR_VERSION so
+      // unqualified migration SQL cannot fall through to public.outbox.
+      st.execute("""
+          CREATE TABLE %s.outbox (
+            id BIGSERIAL PRIMARY KEY,
+            aggregate_type VARCHAR(100) NOT NULL,
+            aggregate_id VARCHAR(100) NOT NULL,
+            event_type VARCHAR(100) NOT NULL,
+            payload JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            published_at TIMESTAMPTZ
           )
           """.formatted(schema));
       String[] existingStatuses = {"ALLOCATING", "RUNNING", "COMPLETED", "FAILED", "KILLED"};

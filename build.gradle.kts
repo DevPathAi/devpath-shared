@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "ai.devpath"
-version = "0.0.1-SNAPSHOT"
+version = "0.0.1-et8.20260816"
 description = "DevPath AI shared event schemas + common library"
 
 java {

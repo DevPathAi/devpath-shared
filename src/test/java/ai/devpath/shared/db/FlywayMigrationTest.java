@@ -36,7 +36,9 @@ class FlywayMigrationTest {
    * 같은 설정을 쓴다.
    */
   private static void migrate() {
-    Flyway.configure().dataSource(dataSource())
+    Flyway.configure()
+        .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
+        .dataSource(dataSource())
         .locations("classpath:db/migration")
         .placeholderReplacement(false)
         .load().migrate();
