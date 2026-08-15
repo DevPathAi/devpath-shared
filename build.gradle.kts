@@ -61,6 +61,16 @@ tasks.withType<Test> {
 	useJUnitPlatform()
 }
 
+// Flyway CLI image needs only the Java migration classes. Keeping SQL resources out of this
+// artifact prevents the filesystem SQL location from resolving every version twice.
+tasks.register<Jar>("migrationRunnerJar") {
+	archiveClassifier.set("migration-runner")
+	from(sourceSets.main.get().output.classesDirs) {
+		include("db/migration/**")
+	}
+	dependsOn(tasks.named("compileJava"))
+}
+
 // 로컬 Flyway 실행 설정 (docker-compose의 postgres 대상). CI/배포는 별도 Job.
 flyway {
 	url = "jdbc:postgresql://localhost:5432/devpath"

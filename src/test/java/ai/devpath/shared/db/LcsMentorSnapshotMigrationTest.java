@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
 
@@ -151,6 +152,175 @@ class LcsMentorSnapshotMigrationTest {
     }
   }
 
+  @Test
+  void unrelatedPartialSchemaMigratesLatestWithoutCreatingLcsObjects() throws Exception {
+    String schema = temporarySchemaName();
+    try {
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        st.execute("CREATE SCHEMA " + schema);
+        st.execute("CREATE TABLE " + schema + ".unrelated(id BIGINT PRIMARY KEY)");
+      }
+
+      configuredFlyway(schema, null).migrate();
+
+      try (var c = dataSource().getConnection(); var ps = c.prepareStatement(
+          "SELECT to_regclass(?), to_regclass(?)")) {
+        ps.setString(1, schema + ".learning_context_snapshots");
+        ps.setString(2, schema + ".uq_lcs_source_draft_id");
+        try (var rs = ps.executeQuery()) {
+          assertTrue(rs.next());
+          assertEquals(null, rs.getObject(1));
+          assertEquals(null, rs.getObject(2));
+        }
+      }
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void failedConcurrentUniqueBuildRepairsAndRetriesAfterDuplicateCleanup() throws Exception {
+    String schema = temporarySchemaName();
+    String duplicateDraftId = draftId('9');
+    try {
+      createPriorSchema(schema);
+      migrateBaselined(schema, PHASE_ONE_VERSION);
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        for (int i = 0; i < 2; i++) {
+          st.execute("INSERT INTO " + schema + ".learning_context_snapshots"
+              + "(user_id,purpose,content_snapshot,visibility,source_draft_id) VALUES"
+              + "(42,'mentor_prompt','{}','private','" + duplicateDraftId + "')");
+        }
+      }
+
+      Flyway firstAttempt = configuredFlyway(schema, "202608161010");
+      assertThrows(FlywayException.class, firstAttempt::migrate);
+      IndexState failed = indexState(schema);
+      assertFalse(failed.valid());
+      assertFalse(failed.ready());
+
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        st.execute("DELETE FROM " + schema + ".learning_context_snapshots WHERE id = ("
+            + "SELECT max(id) FROM " + schema
+            + ".learning_context_snapshots WHERE source_draft_id='" + duplicateDraftId + "')");
+      }
+      firstAttempt.repair();
+      configuredFlyway(schema, null).migrate();
+
+      IndexState repaired = indexState(schema);
+      assertTrue(repaired.valid());
+      assertTrue(repaired.ready());
+      assertTrue(repaired.unique());
+      assertTrue(repaired.definition().contains("(source_draft_id)"));
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void successfulIndexWithLostHistoryReplaysAsNoOpAndPreservesOid() throws Exception {
+    String schema = temporarySchemaName();
+    try {
+      createPriorSchema(schema);
+      migrateBaselined(schema, "202608161010");
+      IndexState before = indexState(schema);
+      assertTrue(before.valid());
+      assertTrue(before.ready());
+
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        assertEquals(1, st.executeUpdate("DELETE FROM " + schema
+            + ".flyway_schema_history WHERE version='202608161010'"));
+      }
+
+      configuredFlyway(schema, "202608161010").migrate();
+
+      IndexState after = indexState(schema);
+      assertEquals(before.oid(), after.oid(),
+          "history-loss replay must not drop and rebuild an already exact valid index");
+      assertTrue(after.valid());
+      assertTrue(after.ready());
+      assertTrue(after.unique());
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void sameNamedIndexOnTheWrongTableIsReplacedWithTheExactLcsDefinition()
+      throws Exception {
+    String schema = temporarySchemaName();
+    try {
+      createPriorSchema(schema);
+      migrateBaselined(schema, PHASE_ONE_VERSION);
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        st.execute("CREATE TABLE " + schema
+            + ".wrong_index_owner(source_draft_id VARCHAR(41) NOT NULL UNIQUE)");
+        st.execute("CREATE UNIQUE INDEX uq_lcs_source_draft_id ON " + schema
+            + ".wrong_index_owner(source_draft_id)");
+      }
+
+      configuredFlyway(schema, null).migrate();
+
+      try (var c = dataSource().getConnection(); var ps = c.prepareStatement("""
+          SELECT table_class.relname
+          FROM pg_index index_state
+          JOIN pg_class index_class ON index_class.oid=index_state.indexrelid
+          JOIN pg_namespace index_schema ON index_schema.oid=index_class.relnamespace
+          JOIN pg_class table_class ON table_class.oid=index_state.indrelid
+          WHERE index_schema.nspname=? AND index_class.relname='uq_lcs_source_draft_id'
+          """)) {
+        ps.setString(1, schema);
+        try (var rs = ps.executeQuery()) {
+          assertTrue(rs.next());
+          assertEquals("learning_context_snapshots", rs.getString(1));
+          assertFalse(rs.next());
+        }
+      }
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
+  @Test
+  void sameNamedIndexWithNonDefaultDefinitionIsReplaced() throws Exception {
+    String schema = temporarySchemaName();
+    try {
+      createPriorSchema(schema);
+      migrateBaselined(schema, PHASE_ONE_VERSION);
+      long mismatchedOid;
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        st.execute("CREATE UNIQUE INDEX uq_lcs_source_draft_id ON " + schema
+            + ".learning_context_snapshots(source_draft_id) NULLS NOT DISTINCT "
+            + "WITH (fillfactor=80)");
+        mismatchedOid = indexState(schema).oid();
+      }
+
+      configuredFlyway(schema, null).migrate();
+
+      IndexState exact = indexState(schema);
+      assertFalse(exact.oid() == mismatchedOid,
+          "a non-default same-name definition must be rebuilt, not accepted as exact");
+      try (var c = dataSource().getConnection(); var ps = c.prepareStatement("""
+          SELECT index_state.indnullsnotdistinct,index_class.reloptions,
+                 index_class.reltablespace
+          FROM pg_index index_state
+          JOIN pg_class index_class ON index_class.oid=index_state.indexrelid
+          JOIN pg_namespace index_schema ON index_schema.oid=index_class.relnamespace
+          WHERE index_schema.nspname=? AND index_class.relname='uq_lcs_source_draft_id'
+          """)) {
+        ps.setString(1, schema);
+        try (var rs = ps.executeQuery()) {
+          assertTrue(rs.next());
+          assertFalse(rs.getBoolean(1));
+          assertEquals(null, rs.getArray(2));
+          assertEquals(0, rs.getLong(3));
+        }
+      }
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
   private static void createPriorSchema(String schema) throws Exception {
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       st.execute("CREATE SCHEMA " + schema);
@@ -176,6 +346,10 @@ class LcsMentorSnapshotMigrationTest {
   }
 
   private static void migrateBaselined(String schema, String target) {
+    configuredFlyway(schema, target).migrate();
+  }
+
+  private static Flyway configuredFlyway(String schema, String target) {
     var config = Flyway.configure()
         .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
         .dataSource(dataSource())
@@ -188,7 +362,31 @@ class LcsMentorSnapshotMigrationTest {
     if (target != null) {
       config.target(target);
     }
-    config.load().migrate();
+    return config.load();
+  }
+
+  private static IndexState indexState(String schema) throws Exception {
+    try (var c = dataSource().getConnection(); var ps = c.prepareStatement("""
+        SELECT cls.oid,idx.indisvalid,idx.indisready,idx.indisunique,
+               pg_get_indexdef(idx.indexrelid)
+        FROM pg_index idx
+        JOIN pg_class cls ON cls.oid=idx.indexrelid
+        JOIN pg_namespace ns ON ns.oid=cls.relnamespace
+        WHERE ns.nspname=? AND cls.relname='uq_lcs_source_draft_id'
+        """)) {
+      ps.setString(1, schema);
+      try (var rs = ps.executeQuery()) {
+        assertTrue(rs.next(), "source draft index must exist");
+        IndexState state = new IndexState(
+            rs.getLong(1), rs.getBoolean(2), rs.getBoolean(3), rs.getBoolean(4), rs.getString(5));
+        assertFalse(rs.next());
+        return state;
+      }
+    }
+  }
+
+  private record IndexState(
+      long oid, boolean valid, boolean ready, boolean unique, String definition) {
   }
 
   private static Map<String, Boolean> constraints(java.sql.Connection c, String schema)
