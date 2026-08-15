@@ -109,6 +109,7 @@ class AiReviewIdempotencyMigrationTest {
           + "finished_at TIMESTAMPTZ, exit_code INT, stderr TEXT, "
           + "updated_at TIMESTAMPTZ NOT NULL DEFAULT now())");
       st.execute("CREATE TABLE " + schema + ".outbox (id BIGSERIAL PRIMARY KEY)");
+      createHistoricalLcsTable(st, schema);
       st.execute("CREATE TABLE " + schema + ".ai_code_reviews ("
           + "id BIGSERIAL PRIMARY KEY, sandbox_session_id BIGINT NOT NULL, "
           + "user_id BIGINT NOT NULL, content_id BIGINT, "
@@ -123,6 +124,24 @@ class AiReviewIdempotencyMigrationTest {
       st.execute("INSERT INTO " + schema
           + ".ai_code_reviews(sandbox_session_id,user_id,status) VALUES(7001,42,'PENDING')");
     }
+  }
+
+  private static void createHistoricalLcsTable(java.sql.Statement st, String schema)
+      throws Exception {
+    st.execute("CREATE TABLE " + schema + ".learning_context_snapshots ("
+        + "id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL,"
+        + "purpose VARCHAR(32) NOT NULL DEFAULT 'question_attachment',"
+        + "attached_to_type VARCHAR(32),attached_to_id BIGINT,"
+        + "content_snapshot JSONB NOT NULL,"
+        + "visibility VARCHAR(16) NOT NULL DEFAULT 'answerers_only',"
+        + "fields_included JSONB NOT NULL DEFAULT '[]',"
+        + "created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        + "CONSTRAINT chk_lcs_purpose CHECK "
+        + "(purpose IN ('question_attachment','analytics')),"
+        + "CONSTRAINT chk_lcs_visibility CHECK "
+        + "(visibility IN ('public','answerers_only','private')),"
+        + "CONSTRAINT chk_lcs_attached_type CHECK "
+        + "(attached_to_type IS NULL OR attached_to_type IN ('question','answer')))" );
   }
 
   private static void migrate(String schema, String target) {

@@ -139,6 +139,7 @@ class SandboxDurableTerminalStateMigrationTest {
             published_at TIMESTAMPTZ
           )
           """.formatted(schema));
+      createHistoricalLcsTable(st, schema);
       String[] existingStatuses = {"ALLOCATING", "RUNNING", "COMPLETED", "FAILED", "KILLED"};
       for (int i = 0; i < existingStatuses.length; i++) {
         st.execute("INSERT INTO " + schema + ".sandbox_sessions"
@@ -147,6 +148,24 @@ class SandboxDurableTerminalStateMigrationTest {
             + "','class Main {}','existing " + existingStatuses[i] + "',0)");
       }
     }
+  }
+
+  private static void createHistoricalLcsTable(java.sql.Statement st, String schema)
+      throws Exception {
+    st.execute("CREATE TABLE " + schema + ".learning_context_snapshots ("
+        + "id BIGSERIAL PRIMARY KEY,user_id BIGINT NOT NULL,"
+        + "purpose VARCHAR(32) NOT NULL DEFAULT 'question_attachment',"
+        + "attached_to_type VARCHAR(32),attached_to_id BIGINT,"
+        + "content_snapshot JSONB NOT NULL,"
+        + "visibility VARCHAR(16) NOT NULL DEFAULT 'answerers_only',"
+        + "fields_included JSONB NOT NULL DEFAULT '[]',"
+        + "created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        + "CONSTRAINT chk_lcs_purpose CHECK "
+        + "(purpose IN ('question_attachment','analytics')),"
+        + "CONSTRAINT chk_lcs_visibility CHECK "
+        + "(visibility IN ('public','answerers_only','private')),"
+        + "CONSTRAINT chk_lcs_attached_type CHECK "
+        + "(attached_to_type IS NULL OR attached_to_type IN ('question','answer')))" );
   }
 
   private static void assertMigratedContract(String schema) throws Exception {

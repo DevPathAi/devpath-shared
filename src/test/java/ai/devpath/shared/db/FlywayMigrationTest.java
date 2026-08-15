@@ -938,10 +938,15 @@ class FlywayMigrationTest {
         var conf = sql.resolveSibling(sql.getFileName() + ".conf");
         assertTrue(java.nio.file.Files.exists(conf),
             sql.getFileName() + " 는 ${...} 를 담고 있으므로 " + conf.getFileName() + " 가 필요하다");
+        String withoutFlywayBuiltIns = body.replaceAll("\\$\\{flyway:[^}]+}", "");
+        boolean needsApplicationLiteralProtection = withoutFlywayBuiltIns.contains("${");
+        String config = java.nio.file.Files.readString(
+            conf, java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(
-            java.nio.file.Files.readString(conf, java.nio.charset.StandardCharsets.UTF_8)
-                .contains("placeholderReplacement=false"),
-            conf.getFileName() + " 는 placeholderReplacement=false 를 담아야 한다");
+            config.contains(needsApplicationLiteralProtection
+                ? "placeholderReplacement=false"
+                : "placeholderReplacement=true"),
+            conf.getFileName() + " 의 placeholder mode가 SQL placeholder 종류와 일치해야 한다");
       }
     }
   }
