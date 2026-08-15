@@ -52,6 +52,15 @@ class ErrorEnvelopeTest {
   }
 
   @Test
+  void mentorBusy_maps_to_distinct_typed_429_envelope() {
+    var r = handler.handle(new ApiException(ErrorCode.MENTOR_BUSY, "mentor is busy; retry later"));
+
+    assertEquals(429, r.getStatusCode().value());
+    assertEquals("MENTOR_BUSY", r.getBody().error().code());
+    assertEquals("mentor is busy; retry later", r.getBody().error().message());
+  }
+
+  @Test
   void accessDenied_maps_to_forbidden() {
     var r = handler.handleAccessDenied(new AccessDeniedException("nope"));
     assertEquals(403, r.getStatusCode().value());
@@ -84,6 +93,7 @@ class ErrorEnvelopeTest {
     assertEquals(409, ErrorCode.CONFLICT.status());
     assertEquals(429, ErrorCode.QUOTA_EXCEEDED.status());
     assertEquals(429, ErrorCode.SANDBOX_BUSY.status());
+    assertEquals(429, ErrorCode.MENTOR_BUSY.status());
     assertEquals(503, ErrorCode.AI_KILL_SWITCH_ACTIVE.status());
     assertEquals(503, ErrorCode.SANDBOX_UNAVAILABLE.status());
     assertEquals(500, ErrorCode.INTERNAL_ERROR.status());
