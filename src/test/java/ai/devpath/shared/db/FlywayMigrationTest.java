@@ -168,7 +168,7 @@ class FlywayMigrationTest {
         insert.setNull(1, java.sql.Types.VARCHAR);
         assertEquals(1, insert.executeUpdate(), "nullable UNIQUE는 NULL 여러 건을 허용해야 한다");
 
-        var firstGuestId = java.util.UUID.randomUUID().toString();
+        var firstGuestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
         var secondGuestId = java.util.UUID.randomUUID().toString();
         insert.setString(1, firstGuestId);
         assertEquals(1, insert.executeUpdate());
@@ -179,8 +179,45 @@ class FlywayMigrationTest {
         assertEquals("23505", duplicate.getSQLState(), "동일 non-null guest ID는 unique violation이어야 한다");
         c.rollback(duplicateSavepoint);
 
+        var nonCanonicalSavepoint = c.setSavepoint();
+        insert.setString(1, firstGuestId.toUpperCase(java.util.Locale.ROOT));
+        var nonCanonical = assertThrows(java.sql.SQLException.class, insert::executeUpdate);
+        assertEquals("23514", nonCanonical.getSQLState(),
+            "대소문자 변형으로 unique guest identity를 우회할 수 없어야 한다");
+        c.rollback(nonCanonicalSavepoint);
+
         insert.setString(1, secondGuestId);
         assertEquals(1, insert.executeUpdate(), "서로 다른 guest ID는 공존해야 한다");
+
+        var legacyGuestId = java.util.UUID.randomUUID().toString();
+        Long legacyAssessmentId;
+        try (var legacyInsert = c.prepareStatement(
+            "INSERT INTO assessments(source_guest_id, track) "
+                + "VALUES (NULL, 'BACKEND_SPRING') RETURNING id")) {
+          try (var rs = legacyInsert.executeQuery()) {
+            assertTrue(rs.next());
+            legacyAssessmentId = rs.getLong(1);
+          }
+        }
+        try (var bind = c.prepareStatement(
+            "UPDATE assessments SET source_guest_id = ? WHERE id = ?")) {
+          bind.setString(1, legacyGuestId);
+          bind.setLong(2, legacyAssessmentId);
+          assertEquals(1, bind.executeUpdate(), "legacy NULL row는 전환 중 한 번 귀속할 수 있어야 한다");
+
+          var immutableSavepoint = c.setSavepoint();
+          bind.setString(1, java.util.UUID.randomUUID().toString());
+          var immutable = assertThrows(java.sql.SQLException.class, bind::executeUpdate);
+          assertEquals("23514", immutable.getSQLState(), "귀속된 source_guest_id는 변경할 수 없어야 한다");
+          c.rollback(immutableSavepoint);
+
+          var nullRevertSavepoint = c.setSavepoint();
+          bind.setNull(1, java.sql.Types.VARCHAR);
+          var nullRevert = assertThrows(java.sql.SQLException.class, bind::executeUpdate);
+          assertEquals("23514", nullRevert.getSQLState(),
+              "귀속된 source_guest_id를 NULL로 되돌릴 수 없어야 한다");
+          c.rollback(nullRevertSavepoint);
+        }
 
         var invalidShapeSavepoint = c.setSavepoint();
         insert.setString(1, "not-a-guest-uuid");
