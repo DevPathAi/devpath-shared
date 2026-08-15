@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "ai.devpath"
-version = "0.0.1-et8.20260816"
+version = "0.0.1-et9.20260816"
 description = "DevPath AI shared event schemas + common library"
 
 java {
@@ -93,6 +93,12 @@ publishing {
 		}
 	}
 	repositories {
+		providers.gradleProperty("immutableSharedRepository").orNull?.let { repositoryPath ->
+			maven {
+				name = "ImmutableLocal"
+				url = uri(repositoryPath)
+			}
+		}
 		maven {
 			name = "GitHubPackages"
 			url = uri("https://maven.pkg.github.com/DevPathAi/devpath-shared")
