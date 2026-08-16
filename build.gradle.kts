@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "ai.devpath"
-version = "0.0.1-SNAPSHOT"
+version = "0.0.1-et9.20260816"
 description = "DevPath AI shared event schemas + common library"
 
 java {
@@ -61,6 +61,16 @@ tasks.withType<Test> {
 	useJUnitPlatform()
 }
 
+// Flyway CLI image needs only the Java migration classes. Keeping SQL resources out of this
+// artifact prevents the filesystem SQL location from resolving every version twice.
+tasks.register<Jar>("migrationRunnerJar") {
+	archiveClassifier.set("migration-runner")
+	from(sourceSets.main.get().output.classesDirs) {
+		include("db/migration/**")
+	}
+	dependsOn(tasks.named("compileJava"))
+}
+
 // 로컬 Flyway 실행 설정 (docker-compose의 postgres 대상). CI/배포는 별도 Job.
 flyway {
 	url = "jdbc:postgresql://localhost:5432/devpath"
@@ -83,6 +93,12 @@ publishing {
 		}
 	}
 	repositories {
+		providers.gradleProperty("immutableSharedRepository").orNull?.let { repositoryPath ->
+			maven {
+				name = "ImmutableLocal"
+				url = uri(repositoryPath)
+			}
+		}
 		maven {
 			name = "GitHubPackages"
 			url = uri("https://maven.pkg.github.com/DevPathAi/devpath-shared")
