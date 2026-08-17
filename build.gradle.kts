@@ -65,6 +65,8 @@ tasks.withType<Test> {
 // artifact prevents the filesystem SQL location from resolving every version twice.
 tasks.register<Jar>("migrationRunnerJar") {
 	archiveClassifier.set("migration-runner")
+	isPreserveFileTimestamps = false
+	isReproducibleFileOrder = true
 	from(sourceSets.main.get().output.classesDirs) {
 		include("db/migration/**")
 	}
