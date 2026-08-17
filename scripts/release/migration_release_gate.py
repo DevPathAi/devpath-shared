@@ -40,6 +40,7 @@ MAX_API_DOCUMENT_BYTES = 262_144
 MAX_WORKFLOW_BYTES = 131_072
 MAX_EVIDENCE_BYTES = 16_384
 MAX_KUSTOMIZATION_BYTES = 65_536
+MAX_JOB_BYTES = 262_144
 MAX_RENDER_BYTES = 2_000_000
 SHARED_VERSION = "0.0.1-et9.20260816"
 SHARED_JAR_SHA256 = (
@@ -53,10 +54,14 @@ RELEASE_ID = re.compile(r"^ms-[0-9]{8}-[a-z0-9][a-z0-9-]{2,40}$")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA64 = re.compile(r"^[0-9a-f]{64}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+SAFE_TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 POSITIVE_INTEGER = re.compile(r"^[1-9][0-9]{0,19}$")
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 UTC_Z = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 PUBLISH_MODES = {"published", "reused"}
+MIGRATION_JOB_NAME = re.compile(
+    rf"^{re.escape(MIGRATION_JOB_PREFIX)}([0-9a-f]{{12}})-([0-9a-f]{{24}})$"
+)
 
 
 class GateError(ValueError):
@@ -359,9 +364,19 @@ def validate_sealed_release(
     }
 
 
-def derived_migration_job_name(image_digest: str) -> str:
+def derived_migration_job_name(
+    image_digest: str, release_manifest_sha256: str
+) -> str:
     digest = _nonzero(DIGEST, image_digest, "migration image digest")
-    return MIGRATION_JOB_PREFIX + digest.removeprefix("sha256:")[:24]
+    release_sha = _nonzero(
+        SHA64, release_manifest_sha256, "release manifest SHA-256"
+    )
+    return (
+        MIGRATION_JOB_PREFIX
+        + digest.removeprefix("sha256:")[:12]
+        + "-"
+        + release_sha[:24]
+    )
 
 
 def _validate_lf_text(raw: bytes, label: str, maximum: int) -> str:
@@ -375,8 +390,9 @@ def _validate_lf_text(raw: bytes, label: str, maximum: int) -> str:
         raise GateError(f"{label} must be UTF-8") from exc
 
 
-def _migration_release_patch(image_digest: str) -> bytes:
-    job_name = derived_migration_job_name(image_digest)
+def _migration_release_patch_for_job_name(job_name: str) -> bytes:
+    if MIGRATION_JOB_NAME.fullmatch(job_name) is None:
+        raise GateError("migration Job name has an invalid format")
     return (
         "patches:\n"
         "- target:\n"
@@ -394,62 +410,201 @@ def _migration_release_patch(image_digest: str) -> bytes:
     ).encode("utf-8")
 
 
-def add_migration_release_patch(kustomization_raw: bytes, image_digest: str) -> bytes:
+def _migration_release_patch(
+    image_digest: str, release_manifest_sha256: str
+) -> bytes:
+    return _migration_release_patch_for_job_name(
+        derived_migration_job_name(image_digest, release_manifest_sha256)
+    )
+
+
+def _migration_image_block(text: str) -> tuple[list[str], int, int, int]:
+    lines = text.splitlines(keepends=True)
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if line.strip() == f"- name: {IMAGE_REPOSITORY}"
+    ]
+    if len(matches) != 1:
+        raise GateError("migration base must contain exactly one target image entry")
+    if sum(1 for line in lines if line.lstrip().startswith("- name:")) != 1:
+        raise GateError("migration base image transformer must contain one image")
+    start = matches[0]
+    indent = len(lines[start]) - len(lines[start].lstrip(" "))
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        stripped = lines[index].strip()
+        if not stripped:
+            continue
+        current_indent = len(lines[index]) - len(lines[index].lstrip(" "))
+        if current_indent <= indent:
+            end = index
+            break
+    return lines, start, end, indent
+
+
+def _validate_migration_image_selector(
+    body: str, selector_kind: str, selector_value: str
+) -> None:
+    lines, start, end, _ = _migration_image_block(body)
+    block = [line.strip() for line in lines[start:end] if line.strip()]
+    if block != [
+        f"- name: {IMAGE_REPOSITORY}",
+        f"newName: {IMAGE_REPOSITORY}",
+        f"{selector_kind}: {selector_value}",
+    ]:
+        raise GateError("migration base image selector bytes are not exact")
+
+
+def _migration_base_parts(
+    kustomization_raw: bytes,
+) -> tuple[str, str, str, str | None]:
     text = _validate_lf_text(
         kustomization_raw, "migration kustomization", MAX_KUSTOMIZATION_BYTES
     )
-    if re.search(
-        r"(?m)^patches(?:Json6902|StrategicMerge)?\s*:", text
-    ) is not None:
-        raise GateError("base migration kustomization contains a patch collection")
     forbidden = (
         "argocd.argoproj.io/sync-options",
+        "sync-options",
         "Force=true",
         "Replace=true",
-        "/metadata/name",
-        "/spec/suspend",
+        "patchesJson6902:",
+        "patchesStrategicMerge:",
     )
     for literal in forbidden:
         if literal in text:
             raise GateError(
-                f"base migration kustomization contains forbidden {literal}"
+                f"sealed base migration kustomization contains forbidden {literal}"
             )
+    patch_keys = list(re.finditer(r"(?m)^[ \t]*patches:[^\r\n]*$", text))
+    if len(patch_keys) > 1:
+        raise GateError("sealed base migration patch is duplicated")
+    if patch_keys and patch_keys[0].group(0) != "patches:":
+        raise GateError("sealed base migration patch key is not exact")
+    marker = -1 if not patch_keys else patch_keys[0].start()
+    body = text if marker < 0 else text[:marker]
+    patch = "" if marker < 0 else text[marker:]
+    selectors = [
+        (kind, line.removeprefix(f"  {kind}: "))
+        for line in body.splitlines()
+        for kind in ("newTag", "digest")
+        if line.startswith(f"  {kind}: ")
+    ]
+    if len(selectors) != 1:
+        raise GateError("sealed base migration selector is not unique")
+    kind, value = selectors[0]
+    prior_release_prefix: str | None = None
+    if kind == "newTag":
+        if SAFE_TAG.fullmatch(value) is None or patch:
+            raise GateError("legacy migration base tag/patch is not exact")
+    else:
+        prior_digest = _nonzero(DIGEST, value, "prior migration digest")
+        prior_names = re.findall(
+            rf"(?m)^      value: ({re.escape(MIGRATION_JOB_PREFIX)}"
+            r"[0-9a-f]{12}-[0-9a-f]{24})$",
+            patch,
+        )
+        if len(prior_names) != 1:
+            raise GateError("prior migration Job name is not unique and exact")
+        prior_name = prior_names[0]
+        prior_name_match = MIGRATION_JOB_NAME.fullmatch(prior_name)
+        if (
+            prior_name_match is None
+            or prior_name_match.group(1)
+            != prior_digest.removeprefix("sha256:")[:12]
+        ):
+            raise GateError("prior migration Job name does not bind its digest")
+        prior_release_prefix = prior_name_match.group(2)
+        if patch.encode("utf-8") != _migration_release_patch_for_job_name(
+            prior_name
+        ):
+            raise GateError(
+                "prior migration patch is not the exact digest/release-derived patch"
+            )
+    _validate_migration_image_selector(body, kind, value)
+    return body, kind, value, prior_release_prefix
+
+
+def render_migration_kustomization(
+    kustomization_raw: bytes,
+    image_digest: str,
+    release_manifest_sha256: str,
+) -> bytes:
+    """Render the only permitted legacy/prior release base into a fresh M."""
     digest = _nonzero(DIGEST, image_digest, "migration image digest")
-    if text.count(f"digest: {digest}") != 1:
-        raise GateError("migration kustomization must contain the exact digest once")
-    if "newTag:" in text:
-        raise GateError("migration kustomization must not retain a mutable newTag")
-    result = kustomization_raw + _migration_release_patch(digest)
-    validate_migration_kustomization(result, digest)
+    release_sha = _nonzero(
+        SHA64, release_manifest_sha256, "release manifest SHA-256"
+    )
+    body, kind, prior_value, prior_release_prefix = _migration_base_parts(
+        kustomization_raw
+    )
+    # A same-image next release must still rotate the release-bound Job name.
+    # Only the identical digest/release identity is an invalid empty M.
+    if (
+        kind == "digest"
+        and prior_value == digest
+        and prior_release_prefix == release_sha[:24]
+    ):
+        raise GateError(
+            "migration digest and release are already selected; no new M commit exists"
+        )
+    lines = body.splitlines(keepends=True)
+    selector = [
+        index
+        for index, line in enumerate(lines)
+        if line.startswith(("  newTag: ", "  digest: "))
+    ]
+    if len(selector) != 1:
+        raise GateError("sealed base migration selector is not unique")
+    lines[selector[0]] = f"  digest: {digest}\n"
+    result = "".join(lines).encode("utf-8") + _migration_release_patch(
+        digest, release_sha
+    )
+    validate_migration_kustomization(result, digest, release_sha)
     return result
 
 
-def validate_migration_kustomization(raw: bytes, image_digest: str) -> None:
-    text = _validate_lf_text(raw, "migration kustomization", MAX_KUSTOMIZATION_BYTES)
+def validate_migration_kustomization(
+    raw: bytes, image_digest: str, release_manifest_sha256: str
+) -> None:
     digest = _nonzero(DIGEST, image_digest, "migration image digest")
-    if "argocd.argoproj.io/sync-options" in text:
-        raise GateError("migration kustomization must not set Argo sync options")
-    if "Force=true" in text or "Replace=true" in text:
-        raise GateError("migration kustomization must not force or replace Jobs")
-    if "newTag:" in text:
-        raise GateError("migration kustomization must not retain a mutable newTag")
-    if text.count(f"digest: {digest}") != 1:
-        raise GateError("migration kustomization must contain the exact digest once")
-    patch = _migration_release_patch(digest)
-    if not raw.endswith(patch) or raw.count(patch) != 1:
-        raise GateError("migration release patch bytes are not exact")
-    prefix = raw[: -len(patch)]
-    prefix_text = prefix.decode("utf-8")
-    if re.search(
-        r"(?m)^patches(?:Json6902|StrategicMerge)?\s*:", prefix_text
-    ) is not None:
-        raise GateError("migration kustomization contains an extra patch collection")
+    release_sha = _nonzero(
+        SHA64, release_manifest_sha256, "release manifest SHA-256"
+    )
+    _, kind, selected, release_prefix = _migration_base_parts(raw)
+    if (
+        kind != "digest"
+        or selected != digest
+        or release_prefix != release_sha[:24]
+    ):
+        raise GateError(
+            "migration kustomization digest/release selector is not exact"
+        )
 
 
-def validate_migration_render(render_raw: bytes, image_digest: str) -> str:
+def validate_base_migration_job(job_raw: bytes) -> None:
+    text = _validate_lf_text(job_raw, "base migration Job", MAX_JOB_BYTES)
+    if (
+        text.count("suspend:") != 1
+        or len(re.findall(r"(?m)^spec:$", text)) != 1
+        or re.search(
+            r"(?m)^spec:\n(?:  #[^\r\n]*\n)+  suspend: true\n"
+            r"  backoffLimit: 3\n",
+            text,
+        )
+        is None
+        or "sync-options" in text
+        or "Force=true" in text
+        or "Replace=true" in text
+    ):
+        raise GateError("sealed base migration Job is not canonically inert")
+
+
+def validate_migration_render(
+    render_raw: bytes, image_digest: str, release_manifest_sha256: str
+) -> str:
     text = _validate_lf_text(render_raw, "migration render", MAX_RENDER_BYTES)
     digest = _nonzero(DIGEST, image_digest, "migration image digest")
-    job_name = derived_migration_job_name(digest)
+    job_name = derived_migration_job_name(digest, release_manifest_sha256)
     if "argocd.argoproj.io/sync-options" in text:
         raise GateError("migration render must not contain Argo sync options")
     if "Force=true" in text or "Replace=true" in text:
@@ -465,7 +620,9 @@ def validate_migration_render(render_raw: bytes, image_digest: str) -> str:
     job = jobs[0]
     names = re.findall(r"(?m)^  name:\s*([^\s#]+)\s*$", job)
     if names != [job_name]:
-        raise GateError("migration Job name is not the exact digest-derived name")
+        raise GateError(
+            "migration Job name is not the exact digest/release-derived name"
+        )
     image_line = f"image: {IMAGE_REPOSITORY}@{digest}"
     migration_images = [
         line.strip()
@@ -1032,9 +1189,9 @@ def build_result_evidence(
     if sole_changed_path != MIGRATION_PATH:
         raise GateError("migration sole changed path is not exact")
     digest = _nonzero(DIGEST, image_digest, "migration image digest")
-    expected_job_name = derived_migration_job_name(digest)
+    expected_job_name = derived_migration_job_name(digest, release_sha)
     if rendered_job_name != expected_job_name:
-        raise GateError("rendered migration Job name is not digest-derived")
+        raise GateError("rendered migration Job name is not digest/release-derived")
     expected_subject = f"deploy(devpath-migration): {release_id} sealed {release_sha}"
     if commit_subject != expected_subject:
         raise GateError("migration commit subject is not exact")
@@ -1245,8 +1402,10 @@ def validate_result_evidence(raw: bytes) -> dict[str, object]:
     if migration_image["repository"] != IMAGE_REPOSITORY:
         raise GateError("migration image repository is not exact")
     digest = _nonzero(DIGEST, migration_image["digest"], "migration image digest")
-    if gitops["rendered_job_name"] != derived_migration_job_name(digest):
-        raise GateError("gitops rendered Job name is not digest-derived")
+    if gitops["rendered_job_name"] != derived_migration_job_name(
+        digest, release_sha
+    ):
+        raise GateError("gitops rendered Job name is not digest/release-derived")
 
     if raw != _canonical_json(document):
         raise GateError("migration result evidence is not canonical JSON plus LF")
@@ -1287,11 +1446,15 @@ def verify_result_evidence_dir(directory: Path) -> dict[str, object]:
     return validate_result_evidence(raw)
 
 
-def write_migration_release_patch(path: Path, image_digest: str) -> str:
+def write_migration_kustomization(
+    path: Path, image_digest: str, release_manifest_sha256: str
+) -> str:
     raw = _read_regular_file(
         path, "migration kustomization", MAX_KUSTOMIZATION_BYTES
     )
-    result = add_migration_release_patch(raw, image_digest)
+    result = render_migration_kustomization(
+        raw, image_digest, release_manifest_sha256
+    )
     temporary = path.with_name(f".{path.name}.mission-spine.tmp")
     if temporary.exists() or temporary.is_symlink():
         raise GateError("migration kustomization temporary path is occupied")
@@ -1306,12 +1469,13 @@ def write_migration_release_patch(path: Path, image_digest: str) -> str:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
-        raise GateError("could not atomically add the migration release patch") from exc
+        raise GateError("could not atomically set the migration release") from exc
     validate_migration_kustomization(
         _read_regular_file(path, "migration kustomization", MAX_KUSTOMIZATION_BYTES),
         image_digest,
+        release_manifest_sha256,
     )
-    return derived_migration_job_name(image_digest)
+    return derived_migration_job_name(image_digest, release_manifest_sha256)
 
 
 def _git(root: Path, *args: str) -> str:
@@ -1487,18 +1651,23 @@ def _parser() -> argparse.ArgumentParser:
     approval.add_argument("--approvals-document", type=Path, required=True)
     approval.add_argument("--jobs-document", type=Path, required=True)
 
-    add_patch = subparsers.add_parser("add-migration-release-patch")
-    add_patch.add_argument("--kustomization", type=Path, required=True)
-    add_patch.add_argument("--image-digest", required=True)
-    add_patch.add_argument("--github-output", type=Path, required=True)
+    set_migration = subparsers.add_parser("set-migration-release")
+    set_migration.add_argument("--kustomization", type=Path, required=True)
+    set_migration.add_argument("--image-digest", required=True)
+    set_migration.add_argument("--release-manifest-sha256", required=True)
+    set_migration.add_argument("--github-output", type=Path, required=True)
 
     render = subparsers.add_parser("validate-migration-render")
     render.add_argument("--render", type=Path, required=True)
     render.add_argument("--image-digest", required=True)
+    render.add_argument("--release-manifest-sha256", required=True)
     render.add_argument("--github-output", type=Path, required=True)
 
     base_render = subparsers.add_parser("validate-base-migration-render")
     base_render.add_argument("--render", type=Path, required=True)
+
+    base_job = subparsers.add_parser("validate-base-migration-job")
+    base_job.add_argument("--job", type=Path, required=True)
 
     source = subparsers.add_parser("verify-pre-reconstruction-source")
     source.add_argument("--root", type=Path, required=True)
@@ -1610,21 +1779,24 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             print("verified protected environment approval before GitOps mutation")
-        elif args.command == "add-migration-release-patch":
-            job_name = write_migration_release_patch(
-                args.kustomization, args.image_digest
+        elif args.command == "set-migration-release":
+            job_name = write_migration_kustomization(
+                args.kustomization,
+                args.image_digest,
+                args.release_manifest_sha256,
             )
             _write_outputs(args.github_output, {"rendered_job_name": job_name})
-            print("added exact digest-derived and unsuspend migration patch")
+            print("set exact multi-release digest/name/unsuspend migration bytes")
         elif args.command == "validate-migration-render":
             job_name = validate_migration_render(
                 _read_regular_file(
                     args.render, "migration render", MAX_RENDER_BYTES
                 ),
                 args.image_digest,
+                args.release_manifest_sha256,
             )
             _write_outputs(args.github_output, {"rendered_job_name": job_name})
-            print("verified exact digest-derived migration render")
+            print("verified exact digest/release-derived migration render")
         elif args.command == "validate-base-migration-render":
             validate_base_migration_render(
                 _read_regular_file(
@@ -1632,6 +1804,11 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             print("verified the sealed base migration Job is inert")
+        elif args.command == "validate-base-migration-job":
+            validate_base_migration_job(
+                _read_regular_file(args.job, "base migration Job", MAX_JOB_BYTES)
+            )
+            print("verified the sealed base migration Job is canonically inert")
         elif args.command == "verify-pre-reconstruction-source":
             mode = inspect_pre_reconstruction_source(
                 root=args.root.resolve(),
@@ -1671,6 +1848,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.render, "migration render", MAX_RENDER_BYTES
                 ),
                 args.image_digest,
+                args.release_manifest_sha256,
             )
             raw = build_result_evidence(
                 env=os.environ,

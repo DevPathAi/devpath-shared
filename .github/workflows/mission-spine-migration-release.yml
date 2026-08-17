@@ -335,25 +335,13 @@ jobs:
           test ! -L "$kustomization"
           test -f "$job"
           test ! -L "$job"
-          ! grep -F 'argocd.argoproj.io/sync-options' "$job"
-          ! grep -F 'Force=true' "$job"
-          ! grep -F 'Replace=true' "$job"
-          test "$(grep -Ec '^  suspend: true$' "$job")" -eq 1
-          ! grep -E '^  suspend: false$' "$job"
-          ! grep -F 'patches:' "$kustomization"
-          ! grep -F 'patchesJson6902:' "$kustomization"
-          base_render="$RUNNER_TEMP/mission-spine-base-migration-render.yaml"
-          test ! -e "$base_render"
-          umask 077
-          "$KUSTOMIZE_BIN" build . >"$base_render"
           python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
-            validate-base-migration-render --render "$base_render"
-          "$KUSTOMIZE_BIN" edit set image \
-            "ghcr.io/devpathai/devpath-migration=ghcr.io/devpathai/devpath-migration@$IMAGE_DIGEST"
+            validate-base-migration-job --job "$job"
           python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
-            add-migration-release-patch \
+            set-migration-release \
             --kustomization "$kustomization" \
             --image-digest "$IMAGE_DIGEST" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
             --github-output "$GITHUB_OUTPUT"
           render="$RUNNER_TEMP/mission-spine-migration-render.yaml"
           test ! -e "$render"
@@ -361,7 +349,9 @@ jobs:
           "$KUSTOMIZE_BIN" build . >"$render"
           python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
             validate-migration-render --render "$render" \
-            --image-digest "$IMAGE_DIGEST" --github-output "$GITHUB_OUTPUT"
+            --image-digest "$IMAGE_DIGEST" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --github-output "$GITHUB_OUTPUT"
           mapfile -t changes < <(git -C "$GITHUB_WORKSPACE/expected-gitops" diff --name-only)
           test "${#changes[@]}" -eq 1
           test "${changes[0]}" = "apps/devpath-migration/base/kustomization.yaml"
