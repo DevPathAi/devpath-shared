@@ -1,28 +1,115 @@
-name: Publish Package
+name: Publish immutable Shared package
 
 on:
   push:
     branches: [main]
     paths:
-      - 'src/**'
-      - 'build.gradle.kts'
-  workflow_dispatch:
+      - "src/**"
+      - "build.gradle.kts"
+      - "settings.gradle.kts"
+      - "gradle/wrapper/**"
+      - ".gitattributes"
+      - "scripts/release/immutable_shared_package.py"
+      - "tests/release/test_immutable_publication.py"
+      - ".github/workflows/publish.yml"
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: immutable-shared-package-publish
+  cancel-in-progress: false
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: mission-spine-shared-package-publish
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f
+        env:
+          POSTGRES_USER: devpath
+          POSTGRES_PASSWORD: localdev
+          POSTGRES_DB: devpath
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    permissions:
+      contents: read
+      deployments: write
+      packages: write
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-java@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require the protected publication environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENVIRONMENT_NAME: mission-spine-shared-package-publish
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/environments/${ENVIRONMENT_NAME}" \
+            | jq -e '[.protection_rules[]? | select(.type == "required_reviewers" and .prevent_self_review == true and ((.reviewers // []) | length > 0))] | length == 1' >/dev/null
+      - name: Prove this is attempt one at the exact current main head
+        env:
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          python3 scripts/release/immutable_shared_package.py verify-source --root .
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961  # v5.2.0
         with:
           distribution: temurin
-          java-version: 21
-      - uses: gradle/actions/setup-gradle@v6
-      - run: ./gradlew publish
+          java-version: 21.0.12+8
+          check-latest: false
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb  # v6.0.0
+        with:
+          cache-disabled: true
+      - name: Run the immutable publication contract tests
+        run: python3 -m unittest discover -s tests/release -p 'test_*.py' -v
+      - name: Rebuild the exact publication from a clean tree
+        run: >-
+          ./gradlew clean build
+          generatePomFileForMavenPublication
+          generateMetadataFileForMavenPublication
+          --no-build-cache --no-daemon
+        env:
+          DB_URL: jdbc:postgresql://localhost:5432/devpath
+          DB_USER: devpath
+          DB_PASSWORD: localdev
+      - name: Verify exact local publication bytes
+        run: >-
+          python3 scripts/release/immutable_shared_package.py verify-local
+          --jar build/libs/devpath-shared-0.0.1-et9.20260816.jar
+          --pom build/publications/maven/pom-default.xml
+          --module build/publications/maven/module.json
+      - name: Require the remote coordinate to be wholly absent or byte-exact
+        id: package-state
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/release/immutable_shared_package.py preflight-remote
+          --github-output "$GITHUB_OUTPUT"
+      - name: Publish the absent immutable coordinate exactly once
+        if: steps.package-state.outputs.publish_needed == 'true'
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          ./gradlew publishMavenPublicationToGitHubPackagesRepository
+          --no-build-cache --no-daemon
+      - name: Authenticated post-download verification
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 scripts/release/immutable_shared_package.py postflight-remote
+          --retries 12 --delay-seconds 5
