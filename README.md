@@ -54,7 +54,9 @@ PR CI는 Temurin `21.0.12+8`과 Gradle `9.5.1`로 clean build한 세 파일을 b
 
 ### Migration release gate
 
-`main` CI는 source-SHA 태그의 migration image만 빌드하며 GitOps를 변경하지 않습니다. GitOps 변경은 `.github/workflows/mission-spine-migration-release.yml`의 수동 dispatch와 `mission-spine-migration-release` protected environment 승인 뒤에만 가능합니다. 이 workflow는 다음을 모두 확인합니다.
+`main` CI는 source-SHA 태그의 migration image만 빌드하며 GitOps를 변경하지 않습니다. 두 build stage는 multiarch index digest로 고정되고, builder/runtime의 index 및 `linux/amd64` child digest 네 개가 OCI label과 evidence에 함께 기록됩니다. pinned Buildx/BuildKit으로 매번 로컬 `linux/amd64` candidate를 먼저 빌드하고, build action의 config digest가 실제 로드된 Docker image ID와 같은지 확인합니다. 태그가 없다는 판정은 exact GHCR manifest endpoint의 bounded canonical `MANIFEST_UNKNOWN` HTTP 404만 허용합니다. config blob은 exact GHCR URL의 direct 200 또는 인증 헤더를 제거한 단일 allowlisted GitHub storage 307 hop으로만 읽습니다. 태그가 이미 있으면 manifest digest, config/rootfs digest, source/revision OCI label, 네 base digest label이 로컬 candidate와 모두 exact match일 때만 재사용하며 덮어쓰지 않습니다. 게시 직전 한 번 더 같은 검사를 수행하고, 게시 후 같은 인증 경로로 digest와 label을 다시 검증한 뒤 exact root `evidence.json` 하나만 `migration-image-evidence-${source_sha}` artifact로 보존합니다. 첫 workflow attempt만 허용하며 같은 source SHA 실행은 `cancel-in-progress=false` concurrency로 직렬화됩니다.
+
+GitOps 변경은 `.github/workflows/mission-spine-migration-release.yml`의 수동 dispatch와 `mission-spine-migration-release` protected environment 승인 뒤에만 가능합니다. 이 workflow는 다음을 모두 확인합니다.
 
 - Shared checkout이 입력 `source_sha`와 일치하는 현재 `main`의 첫 실행인지 확인
 - GitOps release branch의 canonical candidate/release 2-file chain과 raw release-manifest SHA-256 확인

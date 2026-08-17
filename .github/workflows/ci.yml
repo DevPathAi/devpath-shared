@@ -59,7 +59,7 @@ jobs:
       - name: Retain the verified publication bytes for PR inspection
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
-          name: immutable-shared-publication-${{ github.sha }}
+          name: immutable-shared-publication-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build/libs/devpath-shared-0.0.1-et9.20260816.jar
             build/publications/maven/pom-default.xml
@@ -69,24 +69,124 @@ jobs:
 
   image:
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      github.repository == 'DevPathAi/devpath-shared'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    concurrency:
+      group: immutable-migration-image-${{ github.sha }}
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
+          fetch-depth: 1
           persist-credentials: false
+      - name: Prove this is attempt one at the exact current main head
+        env:
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          python3 scripts/release/immutable_migration_image.py verify-source --root .
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3.12.0
+        with:
+          version: v0.34.1
+          driver-opts: >-
+            image=moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+      - name: Build the exact local linux-amd64 candidate without publishing
+        id: image-build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.migration
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ghcr.io/devpathai/devpath-migration:${{ github.sha }}
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+            SOURCE_REPOSITORY=https://github.com/${{ github.repository }}
+            SOURCE_DATE_EPOCH=0
+          no-cache: true
+          provenance: false
+          sbom: false
+      - name: Compare any existing source-SHA tag to the local candidate
+        id: image-state
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_CONFIG_DIGEST: ${{ steps.image-build.outputs.imageid }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/immutable_migration_image.py preflight \
+            --root . \
+            --image-ref "ghcr.io/devpathai/devpath-migration:${GITHUB_SHA}" \
+            --candidate-config-digest "$CANDIDATE_CONFIG_DIGEST" \
+            --github-output "$GITHUB_OUTPUT"
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        if: steps.image-state.outputs.publish_needed == 'true'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a  # v7.3.0
+      - name: Recheck the tag immediately before the only possible push
+        id: push-state
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_CONFIG_DIGEST: ${{ steps.image-build.outputs.imageid }}
+          PREFLIGHT_DIGEST: ${{ steps.image-state.outputs.image_digest }}
+          PREFLIGHT_PUBLISH_NEEDED: ${{ steps.image-state.outputs.publish_needed }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/immutable_migration_image.py recheck \
+            --root . \
+            --image-ref "ghcr.io/devpathai/devpath-migration:${GITHUB_SHA}" \
+            --candidate-config-digest "$CANDIDATE_CONFIG_DIGEST" \
+            --preflight-publish-needed "$PREFLIGHT_PUBLISH_NEEDED" \
+            --preflight-digest "$PREFLIGHT_DIGEST" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Push the still-absent exact local candidate
+        if: steps.push-state.outputs.push_needed == 'true'
+        run: docker push "ghcr.io/devpathai/devpath-migration:${GITHUB_SHA}"
+      - name: Authenticated post-publish or exact-reuse verification
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANDIDATE_CONFIG_DIGEST: ${{ steps.image-build.outputs.imageid }}
+          PREPUSH_DIGEST: ${{ steps.push-state.outputs.image_digest }}
+          PUSH_NEEDED: ${{ steps.push-state.outputs.push_needed }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/immutable_migration_image.py postflight \
+            --root . \
+            --image-ref "ghcr.io/devpathai/devpath-migration:${GITHUB_SHA}" \
+            --candidate-config-digest "$CANDIDATE_CONFIG_DIGEST" \
+            --evidence-dir "${RUNNER_TEMP}/migration-image-evidence" \
+            --push-needed "$PUSH_NEEDED" \
+            --prepush-digest "$PREPUSH_DIGEST" \
+            --retries 12 \
+            --delay-seconds 5
+      - name: Verify the exact sanitized evidence package
+        env:
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: >-
+          python3 scripts/release/immutable_migration_image.py verify-evidence
+          --evidence-dir "${RUNNER_TEMP}/migration-image-evidence"
+      - name: Retain immutable migration image evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
         with:
-          context: .
-          file: Dockerfile.migration
-          push: true
-          tags: ghcr.io/devpathai/devpath-migration:${{ github.sha }}
+          name: migration-image-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/migration-image-evidence/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: false

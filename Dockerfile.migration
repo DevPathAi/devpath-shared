@@ -1,15 +1,34 @@
-FROM eclipse-temurin:21-jdk-alpine AS build
+FROM eclipse-temurin:21-jdk-alpine@sha256:1ff763083f2993d57d0bf374ab10bb3e2cb873af6c13a04458ebbd3e0337dc76 AS build
 WORKDIR /workspace
 COPY gradlew settings.gradle.kts build.gradle.kts ./
 COPY gradle gradle
 COPY src/main/java src/main/java
 RUN ./gradlew migrationRunnerJar --no-daemon
 
-FROM flyway/flyway:11-alpine
-# SQL과 nontransactional Java migration runner를 함께 내장한다. CI가 SHA 태그로
-# push하고 gitops job.yaml의 이미지 태그를 교체하면 ArgoCD가 Job을 재실행한다.
-COPY src/main/resources/db/migration /flyway/sql
-COPY --from=build /workspace/build/libs/*-migration-runner.jar /flyway/drivers/
+FROM flyway/flyway:11-alpine@sha256:df06535dfd6559ae5f0628c4761013dfa4ea6a30cf6e34294931d8091f55a18f
+ARG SOURCE_REVISION
+ARG SOURCE_REPOSITORY
+LABEL org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.source=$SOURCE_REPOSITORY \
+      ai.devpath.migration.builder-base.index-digest=sha256:1ff763083f2993d57d0bf374ab10bb3e2cb873af6c13a04458ebbd3e0337dc76 \
+      ai.devpath.migration.builder-base.amd64-digest=sha256:4ec2402e5ebb803add08b063b9e5e52e7c11961caaae1f490479d925753f0d92 \
+      ai.devpath.migration.runtime-base.index-digest=sha256:df06535dfd6559ae5f0628c4761013dfa4ea6a30cf6e34294931d8091f55a18f \
+      ai.devpath.migration.runtime-base.amd64-digest=sha256:aa01d87052ace414b7fb33ddabbdabb056a1e603a8bb5831dd516176718227e1
+# SQL과 nontransactional Java migration runner를 함께 내장한다. bind mount의
+# 내용은 layer에 직접 남기지 않고, 복사한 모든 경로의 mtime을 epoch로 고정한다.
+RUN --mount=type=bind,source=src/main/resources/db/migration,target=/source-migrations \
+    mkdir -p /flyway/sql \
+    && cp -a /source-migrations/. /flyway/sql/ \
+    && find /flyway/sql -exec touch -h -d @0 {} + \
+    && touch -h -d @0 /flyway
+RUN --mount=type=bind,from=build,source=/workspace/build/libs,target=/migration-jars \
+    set -eu; \
+    set -- /migration-jars/*-migration-runner.jar; \
+    [ "$#" -eq 1 ] && [ -f "$1" ]; \
+    mkdir -p /flyway/drivers; \
+    cp "$1" /flyway/drivers/; \
+    find /flyway/drivers -exec touch -h -d @0 {} +; \
+    touch -h -d @0 /flyway
 
 # 시드 콘텐츠에 JS·Dart 템플릿 리터럴(${...})이 코드 예시로 들어 있다.
 # Flyway 는 기본값에서 이를 placeholder 로 해석해 파싱에 실패하므로 치환을 끈다.
