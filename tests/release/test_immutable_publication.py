@@ -306,7 +306,11 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("actions/runs/$GITHUB_RUN_ID/approvals", self.migration)
         self.assertIn("attempts/1/jobs?filter=latest", self.migration)
         self.assertIn("validate-sealed-release", self.migration)
-        self.assertIn("@$IMAGE_DIGEST", self.migration)
+        self.assertIn('--image-digest "$IMAGE_DIGEST"', self.migration)
+        self.assertIn(
+            '--release-manifest-sha256 "$RELEASE_MANIFEST_SHA256"',
+            self.migration,
+        )
         self.assertNotIn("--force-with-lease", self.migration)
         self.assertNotIn("--force", self.migration)
         self.assertNotIn("exit 0", self.migration)
@@ -345,8 +349,10 @@ class WorkflowContractTest(unittest.TestCase):
             self.migration,
         )
         self.assertIn('GITHUB_API_VERSION: "2026-03-10"', self.migration)
-        self.assertIn("validate-base-migration-render", self.migration)
-        self.assertIn("add-migration-release-patch", self.migration)
+        self.assertIn("validate-base-migration-job", self.migration)
+        self.assertIn("set-migration-release", self.migration)
+        self.assertNotIn('"$KUSTOMIZE_BIN" edit set image', self.migration)
+        self.assertNotIn("! grep -F 'patches:'", self.migration)
         self.assertIn("verify-pre-reconstruction-source", self.migration)
         self.assertIn("verify-protected-approval", self.migration)
         self.assertIn("verify-gitops-authorization", self.migration)

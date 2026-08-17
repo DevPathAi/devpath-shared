@@ -130,7 +130,9 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             "gitops_write_app_id": "4242",
             "gitops_write_app_installation_id": "7654321",
             "sole_changed_path": "apps/devpath-migration/base/kustomization.yaml",
-            "rendered_job_name": "devpath-flyway-migrate-" + "8" * 24,
+            "rendered_job_name": (
+                "devpath-flyway-migrate-" + "8" * 12 + "-" + "3" * 24
+            ),
             "commit_subject": self.subject,
             "commit_author_name": "devpath-gitops-release[bot]",
             "commit_committer_name": "devpath-gitops-release[bot]",
@@ -187,7 +189,9 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                 "sole_changed_path": (
                     "apps/devpath-migration/base/kustomization.yaml"
                 ),
-                "rendered_job_name": "devpath-flyway-migrate-" + "8" * 24,
+                "rendered_job_name": (
+                    "devpath-flyway-migrate-" + "8" * 12 + "-" + "3" * 24
+                ),
                 "commit_subject": self.subject,
                 "commit_author_name": "devpath-gitops-release[bot]",
                 "commit_committer_name": "devpath-gitops-release[bot]",
@@ -805,41 +809,113 @@ class MigrationResultEvidenceTest(unittest.TestCase):
     def test_digest_derived_name_patch_and_render_are_exact_and_force_free(
         self,
     ) -> None:
+        prior_hex = "7" * 64
         digest_hex = "8" * 64
-        derived_name = "devpath-flyway-migrate-" + digest_hex[:24]
-        base = (
+        prior_digest = "sha256:" + prior_hex
+        next_digest = "sha256:" + digest_hex
+        prior_release_sha = "6" * 64
+        next_release_sha = "9" * 64
+        prior_name = (
+            "devpath-flyway-migrate-" + prior_hex[:12] + "-" + prior_release_sha[:24]
+        )
+        derived_name = (
+            "devpath-flyway-migrate-" + digest_hex[:12] + "-" + next_release_sha[:24]
+        )
+        legacy = (
             "apiVersion: kustomize.config.k8s.io/v1beta1\n"
             "kind: Kustomization\n"
             "resources:\n"
             "- job.yaml\n"
             "images:\n"
-            f"- digest: sha256:{digest_hex}\n"
-            "  name: ghcr.io/devpathai/devpath-migration\n"
+            "- name: ghcr.io/devpathai/devpath-migration\n"
             "  newName: ghcr.io/devpathai/devpath-migration\n"
+            "  newTag: release-1\n"
         ).encode("utf-8")
-        patch = (
-            "patches:\n"
-            "- target:\n"
-            "    group: batch\n"
-            "    version: v1\n"
-            "    kind: Job\n"
-            "    name: devpath-flyway-migrate\n"
-            "  patch: |-\n"
-            "    - op: replace\n"
-            "      path: /metadata/name\n"
-            f"      value: {derived_name}\n"
-            "    - op: replace\n"
-            "      path: /spec/suspend\n"
-            "      value: false\n"
-        ).encode("utf-8")
+
+        def patch(job_name: str) -> bytes:
+            return (
+                "patches:\n"
+                "- target:\n"
+                "    group: batch\n"
+                "    version: v1\n"
+                "    kind: Job\n"
+                "    name: devpath-flyway-migrate\n"
+                "  patch: |-\n"
+                "    - op: replace\n"
+                "      path: /metadata/name\n"
+                f"      value: {job_name}\n"
+                "    - op: replace\n"
+                "      path: /spec/suspend\n"
+                "      value: false\n"
+            ).encode("utf-8")
+
+        prior_body = legacy.replace(
+            b"  newTag: release-1\n", f"  digest: {prior_digest}\n".encode()
+        )
+        next_body = legacy.replace(
+            b"  newTag: release-1\n", f"  digest: {next_digest}\n".encode()
+        )
+        release_one = prior_body + patch(prior_name)
+        release_two = next_body + patch(derived_name)
         self.assertEqual(
-            derived_name, MIGRATION.derived_migration_job_name(self.image_digest)
+            derived_name,
+            MIGRATION.derived_migration_job_name(next_digest, next_release_sha),
         )
         self.assertEqual(
-            base + patch,
-            MIGRATION.add_migration_release_patch(base, self.image_digest),
+            release_one,
+            MIGRATION.render_migration_kustomization(
+                legacy, prior_digest, prior_release_sha
+            ),
         )
-        MIGRATION.validate_migration_kustomization(base + patch, self.image_digest)
+        self.assertEqual(
+            release_two,
+            MIGRATION.render_migration_kustomization(
+                release_one, next_digest, next_release_sha
+            ),
+        )
+        MIGRATION.validate_migration_kustomization(
+            release_two, next_digest, next_release_sha
+        )
+        with self.assertRaises(MIGRATION.GateError):
+            MIGRATION.render_migration_kustomization(
+                release_one, prior_digest, prior_release_sha
+            )
+
+        same_digest_next_name = (
+            "devpath-flyway-migrate-" + prior_hex[:12] + "-" + next_release_sha[:24]
+        )
+        same_digest_next = prior_body + patch(same_digest_next_name)
+        self.assertEqual(
+            same_digest_next,
+            MIGRATION.render_migration_kustomization(
+                release_one, prior_digest, next_release_sha
+            ),
+        )
+
+        canonical_job = (
+            "apiVersion: batch/v1\n"
+            "kind: Job\n"
+            "metadata:\n"
+            "  name: devpath-flyway-migrate\n"
+            "spec:\n"
+            "  # Base/main is inert. Only the protected sealed M commit may\n"
+            "  # unsuspend a digest-derived Job after selecting its digest.\n"
+            "  suspend: true\n"
+            "  backoffLimit: 3\n"
+            "  template: {}\n"
+        ).encode()
+        MIGRATION.validate_base_migration_job(canonical_job)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "kustomization.yaml"
+            path.write_bytes(release_one)
+            self.assertEqual(
+                derived_name,
+                MIGRATION.write_migration_kustomization(
+                    path, next_digest, next_release_sha
+                ),
+            )
+            self.assertEqual(release_two, path.read_bytes())
 
         render = (
             "apiVersion: v1\n"
@@ -862,7 +938,9 @@ class MigrationResultEvidenceTest(unittest.TestCase):
         ).encode("utf-8")
         self.assertEqual(
             derived_name,
-            MIGRATION.validate_migration_render(render, self.image_digest),
+            MIGRATION.validate_migration_render(
+                render, next_digest, next_release_sha
+            ),
         )
         base_render = render.replace(
             derived_name.encode(), b"devpath-flyway-migrate"
@@ -873,25 +951,64 @@ class MigrationResultEvidenceTest(unittest.TestCase):
         MIGRATION.validate_base_migration_render(base_render)
 
         for changed in (
-            base + b"patchesStrategicMerge:\n- legacy.yaml\n",
-            base + patch.replace(b"replace", b"add"),
-            base + patch.replace(b"/metadata/name", b"/metadata/annotations"),
-            base + patch.split(b"    - op: replace\n      path: /spec/suspend", 1)[0],
-            base + patch + b"# Force=true,Replace=true\n",
-            (base + patch).replace(digest_hex[:24].encode(), b"9" * 24),
+            prior_body,
+            legacy + patch(prior_name),
+            legacy + b"patches: []\n",
+            legacy + b" patches:\n",
+            legacy + b"patchesJson6902:\n- legacy.yaml\n",
+            legacy + b"patchesStrategicMerge:\n- legacy.yaml\n",
+            release_one + patch(prior_name),
+            release_one.replace(b"replace", b"add", 1),
+            release_one.replace(b"/metadata/name", b"/metadata/annotations"),
+            release_one.split(
+                b"    - op: replace\n      path: /spec/suspend", 1
+            )[0],
+            release_one + b"# Force=true,Replace=true\n",
+            release_one + b"# Replace=true\n",
+            release_one.replace(
+                prior_name.encode(),
+                (
+                    "devpath-flyway-migrate-"
+                    + "9" * 12
+                    + "-"
+                    + prior_release_sha[:24]
+                ).encode(),
+            ),
+            legacy.replace(b"  newTag: release-1\n", b"  newTag: bad tag\n"),
+            legacy.replace(
+                b"  newTag: release-1\n",
+                b"  newTag: release-1\n  digest: sha256:" + b"9" * 64 + b"\n",
+            ),
         ):
             with self.subTest(changed=changed[-100:]), self.assertRaises(
                 MIGRATION.GateError
             ):
-                MIGRATION.validate_migration_kustomization(changed, self.image_digest)
+                MIGRATION.render_migration_kustomization(
+                    changed, next_digest, next_release_sha
+                )
+        for changed_job in (
+            canonical_job.replace(b"suspend: true", b"suspend: false"),
+            canonical_job.replace(
+                b"  suspend: true\n", b"  suspend: true\n  suspend: true\n"
+            ),
+            canonical_job.replace(b"  backoffLimit: 3\n", b""),
+            canonical_job + b"# Force=true,Replace=true\n",
+        ):
+            with self.subTest(changed_job=changed_job[-80:]), self.assertRaises(
+                MIGRATION.GateError
+            ):
+                MIGRATION.validate_base_migration_job(changed_job)
         with self.assertRaises(MIGRATION.GateError):
             MIGRATION.validate_migration_render(
                 render.replace(derived_name.encode(), b"devpath-flyway-migrate-latest"),
-                self.image_digest,
+                next_digest,
+                next_release_sha,
             )
         with self.assertRaises(MIGRATION.GateError):
             MIGRATION.validate_migration_render(
-                render + render.split(b"---\n", 1)[1], self.image_digest
+                render + render.split(b"---\n", 1)[1],
+                next_digest,
+                next_release_sha,
             )
         with self.assertRaises(MIGRATION.GateError):
             MIGRATION.validate_migration_render(
@@ -900,12 +1017,14 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                     "        image: ghcr.io/devpathai/"
                     "devpath-migration:mutable\n"
                 ).encode(),
-                self.image_digest,
+                next_digest,
+                next_release_sha,
             )
         with self.assertRaises(MIGRATION.GateError):
             MIGRATION.validate_migration_render(
                 render.replace(b"  suspend: false\n", b"  suspend: true\n"),
-                self.image_digest,
+                next_digest,
+                next_release_sha,
             )
         with self.assertRaises(MIGRATION.GateError):
             MIGRATION.validate_base_migration_render(
