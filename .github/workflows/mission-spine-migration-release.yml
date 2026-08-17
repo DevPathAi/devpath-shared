@@ -1,0 +1,217 @@
+name: Mission Spine - sealed migration GitOps release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Sealed Mission Spine release ID
+        required: true
+        type: string
+      source_sha:
+        description: Exact current devpath-shared main source SHA
+        required: true
+        type: string
+      sealed_release_sha:
+        description: Exact GitOps commit containing the sealed release
+        required: true
+        type: string
+      gitops_source_sha:
+        description: Exact current GitOps main SHA to update by compare-and-swap
+        required: true
+        type: string
+      release_manifest_sha256:
+        description: Raw SHA-256 of the sealed release-manifest JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mission-spine-migration-release
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: mission-spine-migration-release
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      RELEASE_ID: ${{ inputs.release_id }}
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      SEALED_RELEASE_SHA: ${{ inputs.sealed_release_sha }}
+      GITOPS_SOURCE_SHA: ${{ inputs.gitops_source_sha }}
+      RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Require the protected migration release environment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENVIRONMENT_NAME: mission-spine-migration-release
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/environments/${ENVIRONMENT_NAME}" \
+            | jq -e '[.protection_rules[]? | select(.type == "required_reviewers" and .prevent_self_review == true and ((.reviewers // []) | length > 0))] | length == 1' >/dev/null
+      - name: Prove attempt one at the exact current Shared main head
+        env:
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          [[ "$SEALED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITOPS_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          test "$SEALED_RELEASE_SHA" != "0000000000000000000000000000000000000000"
+          test "$GITOPS_SOURCE_SHA" != "0000000000000000000000000000000000000000"
+          test "$RELEASE_MANIFEST_SHA256" != "0000000000000000000000000000000000000000000000000000000000000000"
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          python3 scripts/release/migration_release_gate.py verify-dispatch \
+            --root . --source-sha "$SOURCE_SHA"
+      - name: Mint the protected GitOps token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.GITOPS_APP_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: DevPathAi
+          repositories: devpath-gitops
+          permission-contents: write
+      - name: Checkout the exact sealed GitOps release commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          repository: DevPathAi/devpath-gitops
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ inputs.sealed_release_sha }}
+          path: sealed-gitops
+          fetch-depth: 3
+          persist-credentials: false
+      - name: Checkout the exact current GitOps main commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          repository: DevPathAi/devpath-gitops
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ inputs.gitops_source_sha }}
+          path: gitops
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Authenticate the sealed release branch and exact manifest bytes
+        id: release
+        run: |
+          set -euo pipefail
+          candidate_path="release-manifests/candidates/$RELEASE_ID.candidate-spec.json"
+          release_path="release-manifests/releases/$RELEASE_ID.json"
+          test "$(git -C sealed-gitops rev-parse HEAD)" = "$SEALED_RELEASE_SHA"
+          git -C sealed-gitops fetch --no-tags origin \
+            "release/candidate-$RELEASE_ID:refs/remotes/origin/release/candidate-$RELEASE_ID"
+          test "$(git -C sealed-gitops rev-parse refs/remotes/origin/release/candidate-$RELEASE_ID)" = "$SEALED_RELEASE_SHA"
+          test -f "sealed-gitops/$candidate_path"
+          test -f "sealed-gitops/$release_path"
+          base_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["gitops"]["base_sha"])' "sealed-gitops/$candidate_path")"
+          validator_head="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["validation_attestation"]["validator_head_sha"])' "sealed-gitops/$release_path")"
+          test "$(git -C sealed-gitops rev-parse HEAD^)" = "$validator_head"
+          test "$(git -C sealed-gitops rev-parse HEAD^^)" = "$base_sha"
+          mapfile -t release_changes < <(git -C sealed-gitops diff --name-only "$base_sha"...HEAD)
+          test "${#release_changes[@]}" -eq 2
+          test "${release_changes[0]}" = "$candidate_path"
+          test "${release_changes[1]}" = "$release_path"
+          python3 sealed-gitops/scripts/release/validate_release_manifest.py \
+            --root sealed-gitops --release-id "$RELEASE_ID"
+          python3 scripts/release/migration_release_gate.py validate-sealed-release \
+            --release-id "$RELEASE_ID" --source-sha "$SOURCE_SHA" \
+            --release "sealed-gitops/$release_path" \
+            --candidate "sealed-gitops/$candidate_path" \
+            --expected-release-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Prove the GitOps update starts at exact current main
+        run: |
+          set -euo pipefail
+          test "$GITOPS_SOURCE_SHA" = "${{ steps.release.outputs.gitops_base_sha }}"
+          test "$(git -C gitops rev-parse HEAD)" = "$GITOPS_SOURCE_SHA"
+          git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
+          test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$GITOPS_SOURCE_SHA"
+          test -z "$(git -C gitops status --porcelain=v1 --untracked-files=all)"
+      - name: Install exact kustomize v5.4.3
+        env:
+          KUSTOMIZE_ARCHIVE_SHA256: 3669470b454d865c8184d6bce78df05e977c9aea31c30df3c669317d43bcc7a7
+          KUSTOMIZE_BINARY_SHA256: 1d6bae90ee8591f7a4ed5b75be3f9bf80b7609f0c785921320827cd93e7c3a9a
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import hashlib
+          import io
+          import os
+          import tarfile
+          import urllib.request
+
+          url = "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz"
+          request = urllib.request.Request(url, headers={"User-Agent": "devpath-shared-release/1"})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              archive = response.read(20_000_001)
+          if len(archive) > 20_000_000:
+              raise SystemExit("kustomize archive exceeds bound")
+          if hashlib.sha256(archive).hexdigest() != os.environ["KUSTOMIZE_ARCHIVE_SHA256"]:
+              raise SystemExit("kustomize archive hash mismatch")
+          with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as bundle:
+              members = bundle.getmembers()
+              if len(members) != 1 or members[0].name != "kustomize" or not members[0].isfile():
+                  raise SystemExit("unexpected kustomize archive layout")
+              if members[0].size != 15_101_952 or members[0].mode != 0o755:
+                  raise SystemExit("unexpected kustomize member metadata")
+              extracted = bundle.extractfile(members[0])
+              if extracted is None:
+                  raise SystemExit("kustomize member missing")
+              binary = extracted.read(15_101_953)
+          if len(binary) != 15_101_952:
+              raise SystemExit("kustomize binary size mismatch")
+          if hashlib.sha256(binary).hexdigest() != os.environ["KUSTOMIZE_BINARY_SHA256"]:
+              raise SystemExit("kustomize binary hash mismatch")
+          destination = Path(os.environ["RUNNER_TEMP"]) / "mission-spine-kustomize"
+          destination.mkdir(mode=0o700)
+          executable = destination / PurePosixPath("kustomize").name
+          executable.write_bytes(binary)
+          executable.chmod(0o755)
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8", newline="\n") as env:
+              env.write(f"KUSTOMIZE_BIN={executable}\n")
+          PY
+      - name: Set only the candidate-bound immutable migration image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$IMAGE_DIGEST" != "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          "$KUSTOMIZE_BIN" edit set image \
+            "ghcr.io/devpathai/devpath-migration=ghcr.io/devpathai/devpath-migration@$IMAGE_DIGEST"
+          "$KUSTOMIZE_BIN" build . >/dev/null
+        working-directory: gitops/apps/devpath-migration/base
+      - name: Compare-and-swap the sealed migration GitOps update
+        env:
+          GITOPS_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git -C gitops remote set-url origin "https://x-access-token:${GITOPS_TOKEN}@github.com/DevPathAi/devpath-gitops.git"
+          mapfile -t changes < <(git -C gitops diff --name-only)
+          if test "${#changes[@]}" -eq 0; then
+            git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
+            test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$GITOPS_SOURCE_SHA"
+            exit 0
+          fi
+          test "${#changes[@]}" -eq 1
+          test "${changes[0]}" = "apps/devpath-migration/base/kustomization.yaml"
+          git -C gitops config user.name "devpath-gitops-bot[bot]"
+          git -C gitops config user.email "devpath-gitops-bot[bot]@users.noreply.github.com"
+          git -C gitops add apps/devpath-migration/base/kustomization.yaml
+          git -C gitops diff --cached --check
+          git -C gitops commit -m "deploy(devpath-migration): $RELEASE_ID sealed $RELEASE_MANIFEST_SHA256"
+          pushed_commit="$(git -C gitops rev-parse HEAD)"
+          git -C gitops push \
+            --force-with-lease=refs/heads/main:$GITOPS_SOURCE_SHA \
+            origin HEAD:refs/heads/main
+          git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
+          test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$pushed_commit"

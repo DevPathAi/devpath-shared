@@ -1,5 +1,6 @@
 package ai.devpath.shared.db;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -35,7 +36,9 @@ class FlywayMigrationTest {
    * 같은 설정을 쓴다.
    */
   private static void migrate() {
-    Flyway.configure().dataSource(dataSource())
+    Flyway.configure()
+        .configuration(java.util.Map.of("flyway.postgresql.transactional.lock", "false"))
+        .dataSource(dataSource())
         .locations("classpath:db/migration")
         .placeholderReplacement(false)
         .load().migrate();
@@ -134,6 +137,98 @@ class FlywayMigrationTest {
     try (var c = dataSource().getConnection();
         var rs = c.getMetaData().getTables(null, "public", "assessments", new String[] {"TABLE"})) {
       assertTrue(rs.next(), "assessments 테이블 필요");
+    }
+  }
+
+  @Test
+  void assessmentsSourceGuestIdContract() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT data_type, character_maximum_length, is_nullable "
+              + "FROM information_schema.columns "
+              + "WHERE table_schema = 'public' AND table_name = 'assessments' "
+              + "AND column_name = 'source_guest_id'")) {
+        assertTrue(rs.next(), "assessments.source_guest_id 컬럼 필요");
+        assertEquals("character varying", rs.getString("data_type"));
+        assertEquals(36, rs.getInt("character_maximum_length"));
+        assertEquals("YES", rs.getString("is_nullable"));
+        assertFalse(rs.next(), "source_guest_id 컬럼은 하나만 존재해야 한다");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT 1 FROM pg_constraint "
+              + "WHERE conrelid = 'public.assessments'::regclass "
+              + "AND conname = 'uq_assessments_source_guest_id' AND contype = 'u'")) {
+        assertTrue(rs.next(), "source_guest_id DB UNIQUE constraint 필요");
+      }
+
+      c.setAutoCommit(false);
+      try (var insert = c.prepareStatement(
+          "INSERT INTO assessments(source_guest_id, track) VALUES (?, 'BACKEND_SPRING')")) {
+        insert.setNull(1, java.sql.Types.VARCHAR);
+        assertEquals(1, insert.executeUpdate());
+        insert.setNull(1, java.sql.Types.VARCHAR);
+        assertEquals(1, insert.executeUpdate(), "nullable UNIQUE는 NULL 여러 건을 허용해야 한다");
+
+        var firstGuestId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        var secondGuestId = java.util.UUID.randomUUID().toString();
+        insert.setString(1, firstGuestId);
+        assertEquals(1, insert.executeUpdate());
+
+        var duplicateSavepoint = c.setSavepoint();
+        insert.setString(1, firstGuestId);
+        var duplicate = assertThrows(java.sql.SQLException.class, insert::executeUpdate);
+        assertEquals("23505", duplicate.getSQLState(), "동일 non-null guest ID는 unique violation이어야 한다");
+        c.rollback(duplicateSavepoint);
+
+        var nonCanonicalSavepoint = c.setSavepoint();
+        insert.setString(1, firstGuestId.toUpperCase(java.util.Locale.ROOT));
+        var nonCanonical = assertThrows(java.sql.SQLException.class, insert::executeUpdate);
+        assertEquals("23514", nonCanonical.getSQLState(),
+            "대소문자 변형으로 unique guest identity를 우회할 수 없어야 한다");
+        c.rollback(nonCanonicalSavepoint);
+
+        insert.setString(1, secondGuestId);
+        assertEquals(1, insert.executeUpdate(), "서로 다른 guest ID는 공존해야 한다");
+
+        var legacyGuestId = java.util.UUID.randomUUID().toString();
+        Long legacyAssessmentId;
+        try (var legacyInsert = c.prepareStatement(
+            "INSERT INTO assessments(source_guest_id, track) "
+                + "VALUES (NULL, 'BACKEND_SPRING') RETURNING id")) {
+          try (var rs = legacyInsert.executeQuery()) {
+            assertTrue(rs.next());
+            legacyAssessmentId = rs.getLong(1);
+          }
+        }
+        try (var bind = c.prepareStatement(
+            "UPDATE assessments SET source_guest_id = ? WHERE id = ?")) {
+          bind.setString(1, legacyGuestId);
+          bind.setLong(2, legacyAssessmentId);
+          assertEquals(1, bind.executeUpdate(), "legacy NULL row는 전환 중 한 번 귀속할 수 있어야 한다");
+
+          var immutableSavepoint = c.setSavepoint();
+          bind.setString(1, java.util.UUID.randomUUID().toString());
+          var immutable = assertThrows(java.sql.SQLException.class, bind::executeUpdate);
+          assertEquals("23514", immutable.getSQLState(), "귀속된 source_guest_id는 변경할 수 없어야 한다");
+          c.rollback(immutableSavepoint);
+
+          var nullRevertSavepoint = c.setSavepoint();
+          bind.setNull(1, java.sql.Types.VARCHAR);
+          var nullRevert = assertThrows(java.sql.SQLException.class, bind::executeUpdate);
+          assertEquals("23514", nullRevert.getSQLState(),
+              "귀속된 source_guest_id를 NULL로 되돌릴 수 없어야 한다");
+          c.rollback(nullRevertSavepoint);
+        }
+
+        var invalidShapeSavepoint = c.setSavepoint();
+        insert.setString(1, "not-a-guest-uuid");
+        var invalidShape = assertThrows(java.sql.SQLException.class, insert::executeUpdate);
+        assertEquals("23514", invalidShape.getSQLState(), "source_guest_id는 UUID 문자열 shape만 허용해야 한다");
+        c.rollback(invalidShapeSavepoint);
+      } finally {
+        c.rollback();
+      }
     }
   }
 
@@ -378,8 +473,8 @@ class FlywayMigrationTest {
       var cols = columns("sandbox_sessions");
       for (String col : new String[] {"id", "user_id", "content_id", "code_block_id",
           "language", "container_id", "status", "submitted_code", "stdout", "stderr",
-          "exit_code", "cpu_ms_used", "memory_mb_peak", "started_at", "finished_at",
-          "created_at", "updated_at"}) {
+          "exit_code", "cpu_ms_used", "memory_mb_peak", "output_truncated", "started_at",
+          "finished_at", "created_at", "updated_at"}) {
         assertTrue(cols.contains(col), "sandbox_sessions." + col + " 컬럼 필요");
       }
 
@@ -843,10 +938,15 @@ class FlywayMigrationTest {
         var conf = sql.resolveSibling(sql.getFileName() + ".conf");
         assertTrue(java.nio.file.Files.exists(conf),
             sql.getFileName() + " 는 ${...} 를 담고 있으므로 " + conf.getFileName() + " 가 필요하다");
+        String withoutFlywayBuiltIns = body.replaceAll("\\$\\{flyway:[^}]+}", "");
+        boolean needsApplicationLiteralProtection = withoutFlywayBuiltIns.contains("${");
+        String config = java.nio.file.Files.readString(
+            conf, java.nio.charset.StandardCharsets.UTF_8);
         assertTrue(
-            java.nio.file.Files.readString(conf, java.nio.charset.StandardCharsets.UTF_8)
-                .contains("placeholderReplacement=false"),
-            conf.getFileName() + " 는 placeholderReplacement=false 를 담아야 한다");
+            config.contains(needsApplicationLiteralProtection
+                ? "placeholderReplacement=false"
+                : "placeholderReplacement=true"),
+            conf.getFileName() + " 의 placeholder mode가 SQL placeholder 종류와 일치해야 한다");
       }
     }
   }
