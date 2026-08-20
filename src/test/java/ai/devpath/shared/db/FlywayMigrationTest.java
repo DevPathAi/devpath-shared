@@ -950,4 +950,77 @@ class FlywayMigrationTest {
       }
     }
   }
+
+  /** 답변·댓글 소프트 삭제 상태 컬럼이 존재하고 기본값이 PUBLISHED 여야 한다. */
+  @Test
+  void communityAnswerAndCommentHaveSoftDeleteStatus() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT column_default, is_nullable FROM information_schema.columns "
+              + "WHERE table_name='community_answers' AND column_name='status'")) {
+        assertTrue(rs.next(), "community_answers.status 가 존재해야 한다");
+        assertTrue(rs.getString(1).contains("PUBLISHED"), "기본값이 PUBLISHED 여야 한다");
+        assertEquals("NO", rs.getString(2), "NOT NULL 이어야 한다");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT column_default, is_nullable FROM information_schema.columns "
+              + "WHERE table_name='community_comments' AND column_name='status'")) {
+        assertTrue(rs.next(), "community_comments.status 가 존재해야 한다");
+        assertTrue(rs.getString(1).contains("PUBLISHED"), "기본값이 PUBLISHED 여야 한다");
+        assertEquals("NO", rs.getString(2), "NOT NULL 이어야 한다");
+      }
+    }
+  }
+
+  /** 상태 CHECK 가 어휘 밖의 값을 막아야 한다. DRAFT 는 답변·댓글에 없다. */
+  @Test
+  void communityContentStatusCheckRejectsUnknownValues() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      st.execute("INSERT INTO community_posts(author_id,board_type,title,body_md) "
+          + "VALUES (900001,'QNA','상태검증','본문')");
+      long postId;
+      try (var rs = st.executeQuery(
+          "SELECT id FROM community_posts WHERE author_id=900001 ORDER BY id DESC LIMIT 1")) {
+        assertTrue(rs.next());
+        postId = rs.getLong(1);
+      }
+      st.execute("INSERT INTO community_questions(post_id) VALUES (" + postId + ")");
+      final long qid = postId;
+      // 대조군을 먼저 세운다. 이 삽입이 성공해야 "거부" 관측이 CHECK 때문이라고 말할 수 있다 —
+      // status 컬럼 자체가 없어도 아래 assertThrows 는 통과하므로, 이것이 없으면 판별력이 0이다.
+      st.execute("INSERT INTO community_answers(question_id,author_id,body_md,status) "
+          + "VALUES (" + qid + ",900002,'답변','HIDDEN')");
+      st.execute("INSERT INTO community_comments(post_id,author_id,body_md,status) "
+          + "VALUES (" + qid + ",900002,'댓글','DELETED')");
+      assertThrows(java.sql.SQLException.class, () -> st.execute(
+          "INSERT INTO community_answers(question_id,author_id,body_md,status) "
+              + "VALUES (" + qid + ",900002,'답변','DRAFT')"));
+      assertThrows(java.sql.SQLException.class, () -> st.execute(
+          "INSERT INTO community_comments(post_id,author_id,body_md,status) "
+              + "VALUES (" + qid + ",900002,'댓글','GONE')"));
+      st.execute("DELETE FROM community_comments WHERE post_id=" + postId);
+      st.execute("DELETE FROM community_answers WHERE question_id=" + postId);
+      st.execute("DELETE FROM community_questions WHERE post_id=" + postId);
+      st.execute("DELETE FROM community_posts WHERE id=" + postId);
+    }
+  }
+
+  /** 리비전 테이블과 다형 대상 CHECK 가 있어야 한다. */
+  @Test
+  void communityContentRevisionsTableExistsWithTargetCheck() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT count(*) FROM information_schema.columns "
+              + "WHERE table_name='community_content_revisions'")) {
+        assertTrue(rs.next());
+        assertEquals(8, rs.getInt(1), "리비전 테이블은 8개 컬럼이어야 한다");
+      }
+      assertThrows(java.sql.SQLException.class, () -> st.execute(
+          "INSERT INTO community_content_revisions(target_type,target_id,body_md,edited_by) "
+              + "VALUES ('QUESTION',1,'본문',1)"));
+    }
+  }
 }
