@@ -181,6 +181,13 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
             "GITHUB_REF": "refs/heads/main",
             "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_SHA": sha,
+            "GITHUB_WORKFLOW_REF": (
+                "DevPathAi/devpath-shared/.github/workflows/"
+                "mission-spine-migration-release.yml@refs/heads/main"
+            ),
+            "GITHUB_WORKFLOW_SHA": sha,
+            "GITHUB_RUN_ID": "123456",
+            "GITHUB_JOB": "deploy",
         }
         PACKAGE.validate_source_identity(env, sha, sha, "")
         for key, value in {
@@ -294,21 +301,113 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("sealed_release_sha:", self.migration)
         self.assertIn("gitops_source_sha:", self.migration)
         self.assertIn("environment: mission-spine-migration-release", self.migration)
-        self.assertIn("prevent_self_review", self.migration)
+        self.assertIn("name: deploy", self.migration)
+        self.assertIn("actions: read", self.migration)
+        self.assertIn("actions/runs/$GITHUB_RUN_ID/approvals", self.migration)
+        self.assertIn("attempts/1/jobs?filter=latest", self.migration)
         self.assertIn("validate-sealed-release", self.migration)
+        self.assertIn('--image-digest "$IMAGE_DIGEST"', self.migration)
         self.assertIn(
-            'test "$GITOPS_SOURCE_SHA" = "${{ steps.release.outputs.gitops_base_sha }}"',
+            '--release-manifest-sha256 "$RELEASE_MANIFEST_SHA256"',
             self.migration,
         )
-        self.assertIn("@$IMAGE_DIGEST", self.migration)
-        self.assertIn("--force-with-lease=refs/heads/main:$GITOPS_SOURCE_SHA", self.migration)
+        self.assertNotIn("--force-with-lease", self.migration)
+        self.assertNotIn("--force", self.migration)
+        self.assertNotIn("exit 0", self.migration)
+        self.assertIn("git -C gitops push origin HEAD:refs/heads/main", self.migration)
+        self.assertEqual(
+            2,
+            self.migration.count('"repos/$GITHUB_REPOSITORY/branches/main"'),
+        )
+        self.assertLess(
+            self.migration.index(
+                "Verify protected approval before GitOps mutation"
+            ),
+            self.migration.index("git -C gitops push origin HEAD:refs/heads/main"),
+        )
         self.assertIn(
-            'test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$pushed_commit"',
+            'test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$migration_commit_sha"',
             self.migration,
         )
+        self.assertIn("GITOPS_RELEASE_APP_ID", self.migration)
+        self.assertIn("GITOPS_RELEASE_APP_PRIVATE_KEY", self.migration)
+        self.assertNotIn("secrets.GITOPS_APP_ID", self.migration)
+        self.assertNotIn("secrets.GITOPS_APP_PRIVATE_KEY", self.migration)
+        self.assertIn("permission-administration: read", self.migration)
+        self.assertIn("permission-contents: write", self.migration)
+        self.assertIn("owner: DevPathAi", self.migration)
+        self.assertIn("repositories: devpath-gitops", self.migration)
+        self.assertIn("steps.app-token.outputs.app-slug", self.migration)
+        self.assertIn("steps.app-token.outputs.installation-id", self.migration)
+        self.assertIn("'/installation/repositories?per_page=100'", self.migration)
+        self.assertEqual(1, self.migration.count("/installation"))
+        self.assertNotIn(
+            '/installation >"$auth_dir/installation.json"', self.migration
+        )
+        self.assertIn(
+            "repos/DevPathAi/devpath-gitops/branches/main/protection",
+            self.migration,
+        )
+        self.assertIn('GITHUB_API_VERSION: "2026-03-10"', self.migration)
+        self.assertIn("validate-base-migration-job", self.migration)
+        self.assertIn("set-migration-release", self.migration)
+        self.assertNotIn('"$KUSTOMIZE_BIN" edit set image', self.migration)
+        self.assertNotIn("! grep -F 'patches:'", self.migration)
+        self.assertIn("verify-pre-reconstruction-source", self.migration)
+        self.assertIn("verify-protected-approval", self.migration)
+        self.assertIn("verify-gitops-authorization", self.migration)
+        self.assertIn("emit-result-evidence", self.migration)
+        self.assertIn("verify-result-evidence", self.migration)
+        self.assertIn(
+            "name: mission-spine-migration-result-${{ inputs.release_id }}-"
+            "${{ github.run_id }}-attempt-1",
+            self.migration,
+        )
+        self.assertIn(
+            "path: ${{ runner.temp }}/mission-spine-migration-result/"
+            "evidence.json",
+            self.migration,
+        )
+        self.assertIn("overwrite: false", self.migration)
+        self.assertIn("include-hidden-files: false", self.migration)
+        self.assertNotIn("overwrite: true", self.migration)
+        self.assertIn(
+            "actions/upload-artifact@"
+            "b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+            self.migration,
+        )
+        self.assertNotIn("x-access-token:${GITOPS_TOKEN}", self.migration)
         self.assertIn("GITHUB_RUN_ATTEMPT", self.migration)
         self.assertIn("refs/heads/main", self.migration)
         self.assertIn("refs/remotes/origin/main", self.migration)
+        self.assertLess(
+            self.migration.index(
+                'test "$(git -C gitops rev-parse refs/remotes/origin/main)" = '
+                '"$GITOPS_SOURCE_SHA"'
+            ),
+            self.migration.index(
+                "python3 expected-gitops/scripts/release/"
+                "validate_release_manifest.py"
+            ),
+        )
+        self.assertLess(
+            self.migration.index("verify-pre-reconstruction-source"),
+            self.migration.index(
+                "python3 expected-gitops/scripts/release/"
+                "validate_release_manifest.py"
+            ),
+        )
+        self.assertLess(
+            self.migration.index("verify-protected-approval"),
+            self.migration.index("git -C gitops push origin HEAD:refs/heads/main"),
+        )
+        self.assertLess(
+            self.migration.index(
+                "python3 expected-gitops/scripts/release/"
+                "validate_release_manifest.py"
+            ),
+            self.migration.index("git -C gitops push origin HEAD:refs/heads/main"),
+        )
         self.assert_actions_are_sha_pinned(self.migration)
 
 
@@ -350,6 +449,7 @@ class MigrationReleaseGateTest(unittest.TestCase):
                 ),
                 "sha256": self.candidate_sha,
             },
+            "validation_attestation": {"validator_head_sha": "3" * 40},
         }
         self.release_raw = (
             json.dumps(self.release, separators=(",", ":"), sort_keys=True) + "\n"
@@ -373,6 +473,7 @@ class MigrationReleaseGateTest(unittest.TestCase):
                 "candidate_spec_sha256": self.candidate_sha,
                 "gitops_base_sha": "2" * 40,
                 "image_digest": "sha256:" + "a" * 64,
+                "validator_head_sha": "3" * 40,
             },
             self.validate(),
         )
@@ -388,6 +489,16 @@ class MigrationReleaseGateTest(unittest.TestCase):
         for key, value in mutations.items():
             with self.subTest(key=key), self.assertRaises(MIGRATION.GateError):
                 self.validate(**{key: value})
+        release = json.loads(self.release_raw)
+        release["validation_attestation"]["validator_head_sha"] = "0" * 40
+        release_raw = (
+            json.dumps(release, separators=(",", ":"), sort_keys=True) + "\n"
+        ).encode()
+        with self.assertRaises(MIGRATION.GateError):
+            self.validate(
+                release_raw=release_raw,
+                release_sha256=hashlib.sha256(release_raw).hexdigest(),
+            )
 
     def test_candidate_shared_contract_mutations_reject(self) -> None:
         for path, value in {
@@ -426,6 +537,13 @@ class MigrationReleaseGateTest(unittest.TestCase):
             "GITHUB_REF": "refs/heads/main",
             "GITHUB_RUN_ATTEMPT": "1",
             "GITHUB_SHA": sha,
+            "GITHUB_WORKFLOW_REF": (
+                "DevPathAi/devpath-shared/.github/workflows/"
+                "mission-spine-migration-release.yml@refs/heads/main"
+            ),
+            "GITHUB_WORKFLOW_SHA": sha,
+            "GITHUB_RUN_ID": "123456",
+            "GITHUB_JOB": "deploy",
         }
         MIGRATION.validate_dispatch_context(env, sha, sha, "", sha)
         for key, value in {
@@ -434,6 +552,10 @@ class MigrationReleaseGateTest(unittest.TestCase):
             "GITHUB_REF": "refs/heads/develop",
             "GITHUB_RUN_ATTEMPT": "2",
             "GITHUB_SHA": "5" * 40,
+            "GITHUB_WORKFLOW_REF": "fork/workflow@refs/heads/main",
+            "GITHUB_WORKFLOW_SHA": "5" * 40,
+            "GITHUB_RUN_ID": "0",
+            "GITHUB_JOB": "other",
         }.items():
             mutated = dict(env)
             mutated[key] = value

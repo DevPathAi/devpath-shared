@@ -26,7 +26,9 @@ class MigrationRunnerPackagingTest {
     assertTrue(build.contains("include(\"db/migration/**\")"));
 
     String dockerfile = Files.readString(ROOT.resolve("Dockerfile.migration"));
-    assertTrue(dockerfile.contains("/workspace/build/libs/*-migration-runner.jar /flyway/drivers/"));
+    assertTrue(dockerfile.contains(
+        "from=build,source=/workspace/build/libs,target=/migration-jars"));
+    assertTrue(dockerfile.contains("cp \"$1\" /flyway/drivers/"));
     assertTrue(dockerfile.contains(
         "FLYWAY_LOCATIONS=filesystem:/flyway/sql,classpath:db/migration"));
   }

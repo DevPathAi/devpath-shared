@@ -16,7 +16,7 @@ on:
         required: true
         type: string
       gitops_source_sha:
-        description: Exact current GitOps main SHA to update by compare-and-swap
+        description: Exact current GitOps main SHA (sealed base or exact migration child)
         required: true
         type: string
       release_manifest_sha256:
@@ -33,10 +33,12 @@ concurrency:
 
 jobs:
   deploy:
+    name: deploy
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     environment: mission-spine-migration-release
     permissions:
+      actions: read
       contents: read
       deployments: write
     env:
@@ -45,24 +47,19 @@ jobs:
       SEALED_RELEASE_SHA: ${{ inputs.sealed_release_sha }}
       GITOPS_SOURCE_SHA: ${{ inputs.gitops_source_sha }}
       RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+      GITHUB_API_VERSION: "2026-03-10"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
           fetch-depth: 1
           persist-credentials: false
-      - name: Require the protected migration release environment
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ENVIRONMENT_NAME: mission-spine-migration-release
-        run: |
-          set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/environments/${ENVIRONMENT_NAME}" \
-            | jq -e '[.protection_rules[]? | select(.type == "required_reviewers" and .prevent_self_review == true and ((.reviewers // []) | length > 0))] | length == 1' >/dev/null
+
       - name: Prove attempt one at the exact current Shared main head
         env:
           GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          [[ "$RELEASE_ID" =~ ^ms-[0-9]{8}-[a-z0-9][a-z0-9-]{2,40}$ ]]
           [[ "$SEALED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$GITOPS_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RELEASE_MANIFEST_SHA256" =~ ^[0-9a-f]{64}$ ]]
@@ -72,15 +69,105 @@ jobs:
           git fetch --no-tags origin main:refs/remotes/origin/main
           python3 scripts/release/migration_release_gate.py verify-dispatch \
             --root . --source-sha "$SOURCE_SHA"
-      - name: Mint the protected GitOps token
+
+      - name: Mint the protected GitOps App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
         with:
-          app-id: ${{ secrets.GITOPS_APP_ID }}
-          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          app-id: ${{ secrets.GITOPS_RELEASE_APP_ID }}
+          private-key: ${{ secrets.GITOPS_RELEASE_APP_PRIVATE_KEY }}
           owner: DevPathAi
           repositories: devpath-gitops
+          permission-administration: read
           permission-contents: write
+
+      - name: Prepare the exact GitOps authorization verifier
+        run: |
+          set -euo pipefail
+          verifier="$RUNNER_TEMP/verify-mission-spine-gitops-authorization.sh"
+          askpass="$RUNNER_TEMP/mission-spine-git-askpass.sh"
+          test ! -e "$verifier"
+          test ! -e "$askpass"
+          umask 077
+          cat >"$verifier" <<'BASH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          test "$#" -eq 1
+          case "$1" in
+            initial|pre-publish|pre-reuse|evidence) ;;
+            *) exit 1 ;;
+          esac
+          auth_dir="$RUNNER_TEMP/mission-spine-gitops-authorization-$1"
+          test ! -e "$auth_dir"
+          mkdir -m 700 "$auth_dir"
+          gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            '/installation/repositories?per_page=100' \
+            >"$auth_dir/repositories.json"
+          set +e
+          gh api --include -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            'repos/DevPathAi/devpath-gitops/branches/main/protection' \
+            >"$auth_dir/classic-protection-response.txt" 2>&1
+          classic_exit="$?"
+          set -e
+          test "$classic_exit" -ne 0
+          classic_status="$(awk '$1 ~ /^HTTP\// && $2 ~ /^[0-9][0-9][0-9]$/ { code=$2 } END { print code }' "$auth_dir/classic-protection-response.txt")"
+          test "$classic_status" = "404"
+          gh api --paginate --slurp \
+            -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            'repos/DevPathAi/devpath-gitops/rulesets?includes_parents=true&targets=branch&per_page=100' \
+            >"$auth_dir/rulesets.json"
+          mapfile -t ruleset_ids < <(
+            jq -er '
+              if type == "array" and all(.[]; type == "array") then
+                [.[][] | .id | select(type == "number" and . > 0)]
+                | if length == 2 then .[] else error("expected two rulesets") end
+              else error("invalid paginated rulesets") end
+            ' "$auth_dir/rulesets.json"
+          )
+          test "${#ruleset_ids[@]}" -eq 2
+          [[ "${ruleset_ids[0]}" =~ ^[1-9][0-9]*$ ]]
+          [[ "${ruleset_ids[1]}" =~ ^[1-9][0-9]*$ ]]
+          test "${ruleset_ids[0]}" != "${ruleset_ids[1]}"
+          gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            "repos/DevPathAi/devpath-gitops/rulesets/${ruleset_ids[0]}" \
+            >"$auth_dir/ruleset-1.json"
+          gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            "repos/DevPathAi/devpath-gitops/rulesets/${ruleset_ids[1]}" \
+            >"$auth_dir/ruleset-2.json"
+          python3 scripts/release/migration_release_gate.py \
+            verify-gitops-authorization \
+            --app-slug "$GITOPS_APP_SLUG" \
+            --app-id "$GITOPS_APP_ID" \
+            --installation-id "$GITOPS_INSTALLATION_ID" \
+            --repositories "$auth_dir/repositories.json" \
+            --classic-protection-status "$classic_status" \
+            --rulesets "$auth_dir/rulesets.json" \
+            --ruleset-detail "$auth_dir/ruleset-1.json" \
+            --ruleset-detail "$auth_dir/ruleset-2.json" \
+            --github-output "$GITHUB_OUTPUT"
+          BASH
+          chmod 0700 "$verifier"
+          cat >"$askpass" <<'BASH'
+          #!/usr/bin/env bash
+          case "$1" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "$GITOPS_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          BASH
+          chmod 0700 "$askpass"
+
+      - name: Verify the exact App scope and effective main rulesets
+        id: initial-authorization
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITOPS_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GITOPS_APP_ID: ${{ secrets.GITOPS_RELEASE_APP_ID }}
+          GITOPS_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/verify-mission-spine-gitops-authorization.sh" initial
+
       - name: Checkout the exact sealed GitOps release commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
@@ -90,6 +177,7 @@ jobs:
           path: sealed-gitops
           fetch-depth: 3
           persist-credentials: false
+
       - name: Checkout the exact current GitOps main commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
         with:
@@ -97,44 +185,97 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           ref: ${{ inputs.gitops_source_sha }}
           path: gitops
-          fetch-depth: 1
+          fetch-depth: 2
           persist-credentials: false
+
       - name: Authenticate the sealed release branch and exact manifest bytes
         id: release
+        env:
+          GITOPS_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
+          export GIT_ASKPASS="$RUNNER_TEMP/mission-spine-git-askpass.sh"
+          export GIT_TERMINAL_PROMPT=0
+          git -C sealed-gitops remote set-url origin \
+            "https://github.com/DevPathAi/devpath-gitops.git"
+          test -z "$(git -C sealed-gitops config --get-regexp '^http\..*\.extraheader$' || true)"
           candidate_path="release-manifests/candidates/$RELEASE_ID.candidate-spec.json"
           release_path="release-manifests/releases/$RELEASE_ID.json"
           test "$(git -C sealed-gitops rev-parse HEAD)" = "$SEALED_RELEASE_SHA"
+          test "$(git -C sealed-gitops rev-list --parents -n 1 HEAD | awk '{print NF}')" -eq 2
           git -C sealed-gitops fetch --no-tags origin \
             "release/candidate-$RELEASE_ID:refs/remotes/origin/release/candidate-$RELEASE_ID"
           test "$(git -C sealed-gitops rev-parse refs/remotes/origin/release/candidate-$RELEASE_ID)" = "$SEALED_RELEASE_SHA"
           test -f "sealed-gitops/$candidate_path"
+          test ! -L "sealed-gitops/$candidate_path"
           test -f "sealed-gitops/$release_path"
-          base_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["gitops"]["base_sha"])' "sealed-gitops/$candidate_path")"
-          validator_head="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["validation_attestation"]["validator_head_sha"])' "sealed-gitops/$release_path")"
-          test "$(git -C sealed-gitops rev-parse HEAD^)" = "$validator_head"
-          test "$(git -C sealed-gitops rev-parse HEAD^^)" = "$base_sha"
-          mapfile -t release_changes < <(git -C sealed-gitops diff --name-only "$base_sha"...HEAD)
-          test "${#release_changes[@]}" -eq 2
-          test "${release_changes[0]}" = "$candidate_path"
-          test "${release_changes[1]}" = "$release_path"
-          python3 sealed-gitops/scripts/release/validate_release_manifest.py \
-            --root sealed-gitops --release-id "$RELEASE_ID"
+          test ! -L "sealed-gitops/$release_path"
           python3 scripts/release/migration_release_gate.py validate-sealed-release \
             --release-id "$RELEASE_ID" --source-sha "$SOURCE_SHA" \
             --release "sealed-gitops/$release_path" \
             --candidate "sealed-gitops/$candidate_path" \
             --expected-release-sha256 "$RELEASE_MANIFEST_SHA256" \
             --github-output "$GITHUB_OUTPUT"
-      - name: Prove the GitOps update starts at exact current main
+          mapfile -t base_values < <(
+            sed -n 's/^gitops_base_sha=//p' "$GITHUB_OUTPUT"
+          )
+          mapfile -t validator_values < <(
+            sed -n 's/^validator_head_sha=//p' "$GITHUB_OUTPUT"
+          )
+          test "${#base_values[@]}" -eq 1
+          test "${#validator_values[@]}" -eq 1
+          base_sha="${base_values[0]}"
+          validator_head="${validator_values[0]}"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$validator_head" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git -C sealed-gitops rev-parse HEAD^)" = "$validator_head"
+          test "$(git -C sealed-gitops rev-list --parents -n 1 HEAD^ | awk '{print NF}')" -eq 2
+          test "$(git -C sealed-gitops rev-parse HEAD^^)" = "$base_sha"
+          mapfile -t release_changes < <(git -C sealed-gitops diff --name-only "$base_sha"...HEAD)
+          test "${#release_changes[@]}" -eq 2
+          test "${release_changes[0]}" = "$candidate_path"
+          test "${release_changes[1]}" = "$release_path"
+
+      - name: Checkout the sealed GitOps base for exact tree reconstruction
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          repository: DevPathAi/devpath-gitops
+          token: ${{ steps.app-token.outputs.token }}
+          ref: ${{ steps.release.outputs.gitops_base_sha }}
+          path: expected-gitops
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Prove the protected GitOps source chain before executing GitOps code
+        env:
+          GITOPS_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITOPS_BASE_SHA: ${{ steps.release.outputs.gitops_base_sha }}
         run: |
           set -euo pipefail
-          test "$GITOPS_SOURCE_SHA" = "${{ steps.release.outputs.gitops_base_sha }}"
+          export GIT_ASKPASS="$RUNNER_TEMP/mission-spine-git-askpass.sh"
+          export GIT_TERMINAL_PROMPT=0
+          git -C gitops remote set-url origin \
+            "https://github.com/DevPathAi/devpath-gitops.git"
+          test -z "$(git -C gitops config --get-regexp '^http\..*\.extraheader$' || true)"
           test "$(git -C gitops rev-parse HEAD)" = "$GITOPS_SOURCE_SHA"
           git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
           test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$GITOPS_SOURCE_SHA"
           test -z "$(git -C gitops status --porcelain=v1 --untracked-files=all)"
+          test "$(git -C expected-gitops rev-parse HEAD)" = "$GITOPS_BASE_SHA"
+          test -z "$(git -C expected-gitops status --porcelain=v1 --untracked-files=all)"
+          python3 scripts/release/migration_release_gate.py \
+            verify-pre-reconstruction-source --root gitops \
+            --release-id "$RELEASE_ID" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --gitops-base-sha "$GITOPS_BASE_SHA" \
+            --supplied-source-sha "$GITOPS_SOURCE_SHA"
+
+      - name: Validate the full sealed release with the protected base validator
+        run: |
+          set -euo pipefail
+          python3 expected-gitops/scripts/release/validate_release_manifest.py \
+            --root sealed-gitops --release-id "$RELEASE_ID"
+
       - name: Install exact kustomize v5.4.3
         env:
           KUSTOMIZE_ARCHIVE_SHA256: 3669470b454d865c8184d6bce78df05e977c9aea31c30df3c669317d43bcc7a7
@@ -179,39 +320,213 @@ jobs:
           with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8", newline="\n") as env:
               env.write(f"KUSTOMIZE_BIN={executable}\n")
           PY
-      - name: Set only the candidate-bound immutable migration image digest
+
+      - name: Reconstruct the one-file migration tree and exact rendered Job
+        id: expected
         env:
           IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
         run: |
           set -euo pipefail
           [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           test "$IMAGE_DIGEST" != "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-          "$KUSTOMIZE_BIN" edit set image \
-            "ghcr.io/devpathai/devpath-migration=ghcr.io/devpathai/devpath-migration@$IMAGE_DIGEST"
-          "$KUSTOMIZE_BIN" build . >/dev/null
-        working-directory: gitops/apps/devpath-migration/base
-      - name: Compare-and-swap the sealed migration GitOps update
+          kustomization="$GITHUB_WORKSPACE/expected-gitops/apps/devpath-migration/base/kustomization.yaml"
+          job="$GITHUB_WORKSPACE/expected-gitops/apps/devpath-migration/base/job.yaml"
+          test -f "$kustomization"
+          test ! -L "$kustomization"
+          test -f "$job"
+          test ! -L "$job"
+          python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
+            validate-base-migration-job --job "$job"
+          python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
+            set-migration-release \
+            --kustomization "$kustomization" \
+            --image-digest "$IMAGE_DIGEST" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --github-output "$GITHUB_OUTPUT"
+          render="$RUNNER_TEMP/mission-spine-migration-render.yaml"
+          test ! -e "$render"
+          umask 077
+          "$KUSTOMIZE_BIN" build . >"$render"
+          python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
+            validate-migration-render --render "$render" \
+            --image-digest "$IMAGE_DIGEST" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --github-output "$GITHUB_OUTPUT"
+          mapfile -t changes < <(git -C "$GITHUB_WORKSPACE/expected-gitops" diff --name-only)
+          test "${#changes[@]}" -eq 1
+          test "${changes[0]}" = "apps/devpath-migration/base/kustomization.yaml"
+          git -C "$GITHUB_WORKSPACE/expected-gitops" diff --check
+          git -C "$GITHUB_WORKSPACE/expected-gitops" add \
+            apps/devpath-migration/base/kustomization.yaml
+          expected_tree_sha="$(git -C "$GITHUB_WORKSPACE/expected-gitops" write-tree)"
+          [[ "$expected_tree_sha" =~ ^[0-9a-f]{40}$ ]]
+          printf 'expected_tree_sha=%s\n' "$expected_tree_sha" >>"$GITHUB_OUTPUT"
+        working-directory: expected-gitops/apps/devpath-migration/base
+
+      - name: Verify protected approval before GitOps mutation
         env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_source_sha="$(
+            gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha'
+          )"
+          [[ "$current_source_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$current_source_sha" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+          test -z "$(
+            git status --porcelain=v1 --untracked-files=all -- \
+              .gitattributes .github scripts tests
+          )"
+          evidence_input="$RUNNER_TEMP/mission-spine-migration-evidence-input"
+          test ! -e "$evidence_input"
+          mkdir -m 700 "$evidence_input"
+          umask 077
+          gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            "repos/$GITHUB_REPOSITORY/environments/mission-spine-migration-release" \
+            >"$evidence_input/environment.json"
+          gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" \
+            >"$evidence_input/approvals.json"
+          gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/1/jobs?filter=latest&per_page=100" \
+            >"$evidence_input/jobs.json"
+          python3 scripts/release/migration_release_gate.py \
+            verify-protected-approval \
+            --environment-document "$evidence_input/environment.json" \
+            --approvals-document "$evidence_input/approvals.json" \
+            --jobs-document "$evidence_input/jobs.json"
+
+      - name: Publish or reuse the exact migration child
+        id: migration
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITOPS_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITOPS_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GITOPS_APP_ID: ${{ secrets.GITOPS_RELEASE_APP_ID }}
+          GITOPS_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          GITOPS_BASE_SHA: ${{ steps.release.outputs.gitops_base_sha }}
+          EXPECTED_TREE_SHA: ${{ steps.expected.outputs.expected_tree_sha }}
+        run: |
+          set -euo pipefail
+          export GIT_ASKPASS="$RUNNER_TEMP/mission-spine-git-askpass.sh"
+          export GIT_TERMINAL_PROMPT=0
+          git -C gitops remote set-url origin \
+            "https://github.com/DevPathAi/devpath-gitops.git"
+          test "$(git -C gitops remote get-url origin)" = \
+            "https://github.com/DevPathAi/devpath-gitops.git"
+          test -z "$(git -C gitops config --get-regexp '^http\..*\.extraheader$' || true)"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+          if test "$GITOPS_SOURCE_SHA" = "$GITOPS_BASE_SHA"; then
+            cp --no-preserve=mode,ownership,timestamps \
+              expected-gitops/apps/devpath-migration/base/kustomization.yaml \
+              gitops/apps/devpath-migration/base/kustomization.yaml
+            mapfile -t changes < <(git -C gitops diff --name-only)
+            test "${#changes[@]}" -eq 1
+            test "${changes[0]}" = "apps/devpath-migration/base/kustomization.yaml"
+            git -C gitops config user.name "devpath-gitops-release[bot]"
+            git -C gitops config user.email \
+              "devpath-gitops-release[bot]@users.noreply.github.com"
+            git -C gitops add apps/devpath-migration/base/kustomization.yaml
+            git -C gitops diff --cached --check
+            git -C gitops commit \
+              -m "deploy(devpath-migration): $RELEASE_ID sealed $RELEASE_MANIFEST_SHA256"
+            "$RUNNER_TEMP/verify-mission-spine-gitops-authorization.sh" pre-publish
+            git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
+            test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$GITOPS_SOURCE_SHA"
+            git -C gitops push origin HEAD:refs/heads/main
+            publish_mode="published"
+          else
+            "$RUNNER_TEMP/verify-mission-spine-gitops-authorization.sh" pre-reuse
+            publish_mode="reused"
+          fi
+          python3 scripts/release/migration_release_gate.py verify-migration-commit \
+            --root gitops --release-id "$RELEASE_ID" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --gitops-base-sha "$GITOPS_BASE_SHA" \
+            --pre-push-main-sha "$GITOPS_SOURCE_SHA" \
+            --expected-tree-sha "$EXPECTED_TREE_SHA" \
+            --publish-mode "$publish_mode" --github-output "$GITHUB_OUTPUT"
+          migration_commit_sha="$(git -C gitops rev-parse HEAD)"
+          git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
+          test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$migration_commit_sha"
+
+      - name: Recheck authorization and the exact current migration head
+        id: evidence-authorization
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITOPS_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GITOPS_APP_ID: ${{ secrets.GITOPS_RELEASE_APP_ID }}
+          GITOPS_INSTALLATION_ID: ${{ steps.app-token.outputs.installation-id }}
+          MIGRATION_COMMIT_SHA: ${{ steps.migration.outputs.migration_commit_sha }}
           GITOPS_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          git -C gitops remote set-url origin "https://x-access-token:${GITOPS_TOKEN}@github.com/DevPathAi/devpath-gitops.git"
-          mapfile -t changes < <(git -C gitops diff --name-only)
-          if test "${#changes[@]}" -eq 0; then
-            git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
-            test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$GITOPS_SOURCE_SHA"
-            exit 0
-          fi
-          test "${#changes[@]}" -eq 1
-          test "${changes[0]}" = "apps/devpath-migration/base/kustomization.yaml"
-          git -C gitops config user.name "devpath-gitops-bot[bot]"
-          git -C gitops config user.email "devpath-gitops-bot[bot]@users.noreply.github.com"
-          git -C gitops add apps/devpath-migration/base/kustomization.yaml
-          git -C gitops diff --cached --check
-          git -C gitops commit -m "deploy(devpath-migration): $RELEASE_ID sealed $RELEASE_MANIFEST_SHA256"
-          pushed_commit="$(git -C gitops rev-parse HEAD)"
-          git -C gitops push \
-            --force-with-lease=refs/heads/main:$GITOPS_SOURCE_SHA \
-            origin HEAD:refs/heads/main
+          export GIT_ASKPASS="$RUNNER_TEMP/mission-spine-git-askpass.sh"
+          export GIT_TERMINAL_PROMPT=0
+          "$RUNNER_TEMP/verify-mission-spine-gitops-authorization.sh" evidence
+          git -C gitops remote set-url origin \
+            "https://github.com/DevPathAi/devpath-gitops.git"
+          test -z "$(git -C gitops config --get-regexp '^http\..*\.extraheader$' || true)"
           git -C gitops fetch --no-tags origin main:refs/remotes/origin/main
-          test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$pushed_commit"
+          test "$(git -C gitops rev-parse refs/remotes/origin/main)" = "$MIGRATION_COMMIT_SHA"
+
+      - name: Recheck the exact current Shared main before evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_source_sha="$(
+            gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha'
+          )"
+          [[ "$current_source_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$current_source_sha" = "$SOURCE_SHA"
+
+      - name: Emit and verify the sole canonical result evidence
+        env:
+          IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
+          CANDIDATE_SPEC_SHA256: ${{ steps.release.outputs.candidate_spec_sha256 }}
+          GITOPS_BASE_SHA: ${{ steps.release.outputs.gitops_base_sha }}
+          EXPECTED_TREE_SHA: ${{ steps.expected.outputs.expected_tree_sha }}
+          PUBLISH_MODE: ${{ steps.migration.outputs.publish_mode }}
+          APP_SLUG: ${{ steps.evidence-authorization.outputs.write_app_slug }}
+          APP_ID: ${{ steps.evidence-authorization.outputs.write_app_id }}
+          INSTALLATION_ID: ${{ steps.evidence-authorization.outputs.write_app_installation_id }}
+        run: |
+          set -euo pipefail
+          evidence_input="$RUNNER_TEMP/mission-spine-migration-evidence-input"
+          evidence_dir="$RUNNER_TEMP/mission-spine-migration-result"
+          test ! -e "$evidence_dir"
+          python3 scripts/release/migration_release_gate.py emit-result-evidence \
+            --root gitops --release-id "$RELEASE_ID" \
+            --candidate-spec-sha256 "$CANDIDATE_SPEC_SHA256" \
+            --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
+            --workflow .github/workflows/mission-spine-migration-release.yml \
+            --environment-document "$evidence_input/environment.json" \
+            --approvals-document "$evidence_input/approvals.json" \
+            --jobs-document "$evidence_input/jobs.json" \
+            --gitops-base-sha "$GITOPS_BASE_SHA" \
+            --sealed-release-sha "$SEALED_RELEASE_SHA" \
+            --pre-push-main-sha "$GITOPS_SOURCE_SHA" \
+            --expected-tree-sha "$EXPECTED_TREE_SHA" \
+            --publish-mode "$PUBLISH_MODE" --app-slug "$APP_SLUG" \
+            --app-id "$APP_ID" --installation-id "$INSTALLATION_ID" \
+            --image-digest "$IMAGE_DIGEST" \
+            --render "$RUNNER_TEMP/mission-spine-migration-render.yaml" \
+            --evidence-dir "$evidence_dir"
+          python3 scripts/release/migration_release_gate.py verify-result-evidence \
+            --evidence-dir "$evidence_dir"
+
+      - name: Upload the immutable run-scoped migration result
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6.0.0
+        with:
+          name: mission-spine-migration-result-${{ inputs.release_id }}-${{ github.run_id }}-attempt-1
+          path: ${{ runner.temp }}/mission-spine-migration-result/evidence.json
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: false
+          include-hidden-files: false
