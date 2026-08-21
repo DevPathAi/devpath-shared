@@ -1000,6 +1000,25 @@ class FlywayMigrationTest {
       assertThrows(java.sql.SQLException.class, () -> st.execute(
           "INSERT INTO community_comments(post_id,author_id,body_md,status) "
               + "VALUES (" + qid + ",900002,'댓글','GONE')"));
+      // 제약이 "존재" 를 넘어 "검증까지 끝난 정확한 어휘" 인지 단언한다. 이것이 없으면
+      // V202608201002(VALIDATE) 를 통째로 비워도 스위트가 green 이다 — NOT VALID 제약도
+      // 새 행은 거부하므로 위의 assertThrows 만으로는 구분하지 못한다. convalidated 단언은
+      // 이 레포의 다른 마이그레이션 테스트 다섯 곳에 이미 있는 관행이다.
+      try (var rs = st.executeQuery(
+          "SELECT conname, convalidated, pg_get_constraintdef(oid) FROM pg_constraint "
+              + "WHERE conname IN ('chk_community_answers_status',"
+              + "'chk_community_comments_status')")) {
+        int seen = 0;
+        while (rs.next()) {
+          seen++;
+          assertTrue(rs.getBoolean(2), rs.getString(1) + " 는 기존 행 검증까지 끝나야 한다");
+          String def = rs.getString(3);
+          assertTrue(def.contains("PUBLISHED") && def.contains("HIDDEN")
+                  && def.contains("DELETED") && !def.contains("DRAFT"),
+              rs.getString(1) + " 어휘가 정확해야 한다: " + def);
+        }
+        assertEquals(2, seen, "답변·댓글 상태 제약이 모두 있어야 한다");
+      }
       st.execute("DELETE FROM community_comments WHERE post_id=" + postId);
       st.execute("DELETE FROM community_answers WHERE question_id=" + postId);
       st.execute("DELETE FROM community_questions WHERE post_id=" + postId);
