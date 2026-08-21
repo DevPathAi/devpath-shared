@@ -1026,20 +1026,41 @@ class FlywayMigrationTest {
     }
   }
 
-  /** 리비전 테이블과 다형 대상 CHECK 가 있어야 한다. */
+  /**
+   * 리비전 테이블 — ★대조군(유효 삽입)을 먼저 세워야 "거부" 가 CHECK 때문이라 말할 수 있다★.
+   * 이전 형태(count(*)=8 + 대조군 없는 assertThrows)는 body_md 를 다른 이름으로 바꿔도
+   * undefined-column 예외가 assertThrows 를 만족해 통과했다.
+   */
   @Test
   void communityContentRevisionsTableExistsWithTargetCheck() throws Exception {
     migrate();
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
-      try (var rs = st.executeQuery(
-          "SELECT count(*) FROM information_schema.columns "
-              + "WHERE table_name='community_content_revisions'")) {
-        assertTrue(rs.next());
-        assertEquals(8, rs.getInt(1), "리비전 테이블은 8개 컬럼이어야 한다");
-      }
-      assertThrows(java.sql.SQLException.class, () -> st.execute(
+      // 대조군: 세 대상 유형이 실제 컬럼 이름으로 들어간다 — 컬럼 정체성 검증을 겸한다.
+      st.execute("INSERT INTO community_content_revisions"
+          + "(target_type,target_id,title,body_md,body_html,edited_by) "
+          + "VALUES ('POST',910001,'옛제목','옛본문','<p>옛본문</p>',7)");
+      st.execute("INSERT INTO community_content_revisions"
+          + "(target_type,target_id,body_md,edited_by) VALUES ('ANSWER',910001,'옛답변',7)");
+      st.execute("INSERT INTO community_content_revisions"
+          + "(target_type,target_id,body_md,edited_by) VALUES ('COMMENT',910001,'옛댓글',7)");
+
+      java.sql.SQLException bad = assertThrows(java.sql.SQLException.class, () -> st.execute(
           "INSERT INTO community_content_revisions(target_type,target_id,body_md,edited_by) "
-              + "VALUES ('QUESTION',1,'본문',1)"));
+              + "VALUES ('QUESTION',910001,'본문',7)"));
+      assertEquals("23514", bad.getSQLState(),
+          "거부는 CHECK 위반이어야 한다(undefined column 이면 여기서 갈린다)");
+      assertTrue(bad.getMessage().contains("chk_community_revisions_target"),
+          "우리가 세운 그 제약이어야 한다: " + bad.getMessage());
+
+      try (var rs = st.executeQuery(
+          "SELECT indexdef FROM pg_indexes WHERE indexname='idx_community_revisions_target'")) {
+        assertTrue(rs.next(), "대상별 조회 인덱스가 있어야 한다");
+        String def = rs.getString(1);
+        assertTrue(def.contains("target_type") && def.contains("target_id")
+                && def.contains("created_at DESC"), def);
+      }
+
+      st.execute("DELETE FROM community_content_revisions WHERE target_id = 910001");
     }
   }
 }
