@@ -91,6 +91,47 @@ class CommunityContentSoftDeleteMigrationTest {
     }
   }
 
+  /**
+   * ★비대칭(한쪽 테이블만 존재)은 조용한 스킵이 아니라 실패여야 한다★ — 조용히 건너뛰면
+   * Flyway 가 성공으로 기록해 영영 재시도가 없다(fail-open). 외부 리뷰 지적을 채택한 계약.
+   */
+  @Test
+  void asymmetricCommunityTablesFailInsteadOfSilentlySkipping() throws Exception {
+    String schema = "community_sd_" + UUID.randomUUID().toString().replace("-", "");
+    try {
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        st.execute("CREATE SCHEMA " + schema);
+        st.execute("CREATE TABLE " + schema + ".community_answers ("
+            + "id BIGSERIAL PRIMARY KEY, body_md TEXT NOT NULL)");
+        // community_comments 는 일부러 만들지 않는다 — 드리프트 시나리오.
+      }
+
+      Throwable failure = assertThrows(Throwable.class, () -> Flyway.configure()
+          .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
+          .dataSource(dataSource())
+          .locations("classpath:db/migration")
+          .schemas(schema)
+          .defaultSchema(schema)
+          .baselineOnMigrate(true)
+          .baselineVersion(PRIOR_VERSION)
+          .placeholderReplacement(false)
+          .load()
+          .migrate());
+
+      boolean mentionsAsymmetry = false;
+      for (Throwable t = failure; t != null; t = t.getCause()) {
+        if (String.valueOf(t.getMessage()).contains("asymmetric community tables")) {
+          mentionsAsymmetry = true;
+          break;
+        }
+      }
+      assertTrue(mentionsAsymmetry,
+          "비대칭은 우리가 세운 예외로 실패해야 한다(다른 이유의 실패면 오독): " + failure);
+    } finally {
+      dropTemporarySchema(schema);
+    }
+  }
+
   private static void dropTemporarySchema(String schema) throws Exception {
     if (!schema.matches("community_sd_[a-f0-9]{32}")) {
       throw new IllegalArgumentException("refusing to drop unexpected schema: " + schema);

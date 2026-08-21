@@ -1004,18 +1004,27 @@ class FlywayMigrationTest {
       // V202608201002(VALIDATE) 를 통째로 비워도 스위트가 green 이다 — NOT VALID 제약도
       // 새 행은 거부하므로 위의 assertThrows 만으로는 구분하지 못한다. convalidated 단언은
       // 이 레포의 다른 마이그레이션 테스트 다섯 곳에 이미 있는 관행이다.
+      // ★대상 릴레이션에 묶고, 어휘는 "부분 문자열" 이 아니라 "리터럴 집합의 동일성" 으로
+      // 단언한다★ — substring 이면 'ARCHIVED' 를 넣어 넓혀도, 다른 스키마의 동명 제약이
+      // 걸려도 통과한다(외부 리뷰 지적, 실측 확인).
       try (var rs = st.executeQuery(
           "SELECT conname, convalidated, pg_get_constraintdef(oid) FROM pg_constraint "
-              + "WHERE conname IN ('chk_community_answers_status',"
+              + "WHERE conrelid IN ('community_answers'::regclass,"
+              + " 'community_comments'::regclass) "
+              + "AND conname IN ('chk_community_answers_status',"
               + "'chk_community_comments_status')")) {
         int seen = 0;
         while (rs.next()) {
           seen++;
           assertTrue(rs.getBoolean(2), rs.getString(1) + " 는 기존 행 검증까지 끝나야 한다");
           String def = rs.getString(3);
-          assertTrue(def.contains("PUBLISHED") && def.contains("HIDDEN")
-                  && def.contains("DELETED") && !def.contains("DRAFT"),
-              rs.getString(1) + " 어휘가 정확해야 한다: " + def);
+          var literals = new java.util.TreeSet<String>();
+          var m = java.util.regex.Pattern.compile("'([A-Z_]+)'").matcher(def);
+          while (m.find()) {
+            literals.add(m.group(1));
+          }
+          assertEquals(java.util.Set.of("DELETED", "HIDDEN", "PUBLISHED"), literals,
+              rs.getString(1) + " 어휘는 정확히 세 값이어야 한다: " + def);
         }
         assertEquals(2, seen, "답변·댓글 상태 제약이 모두 있어야 한다");
       }

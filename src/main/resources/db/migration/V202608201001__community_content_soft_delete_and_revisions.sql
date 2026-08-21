@@ -16,10 +16,16 @@ DECLARE
   answer_table TEXT := format('%I.community_answers', current_schema());
   comment_table TEXT := format('%I.community_comments', current_schema());
 BEGIN
-  IF to_regclass(answer_table) IS NULL OR to_regclass(comment_table) IS NULL THEN
+  -- 둘 다 없으면 부분 스키마 검증(임시 스키마) — 건너뛴다. 둘 다 있으면 운영 — 실행한다.
+  -- ★한쪽만 없는 비대칭은 드리프트다 — 조용히 건너뛰면 Flyway 가 성공으로 기록해 영영
+  -- 재시도가 없으므로, 실패로 세워 사람이 보게 한다(fail-open 금지).★
+  IF to_regclass(answer_table) IS NULL AND to_regclass(comment_table) IS NULL THEN
     RAISE NOTICE 'Skipping community content soft delete: %.community_answers/comments is absent',
       schema_name;
     RETURN;
+  ELSIF to_regclass(answer_table) IS NULL OR to_regclass(comment_table) IS NULL THEN
+    RAISE EXCEPTION 'asymmetric community tables in schema % (answers: %, comments: %)',
+      schema_name, to_regclass(answer_table) IS NOT NULL, to_regclass(comment_table) IS NOT NULL;
   END IF;
 
   EXECUTE format(

@@ -8,10 +8,14 @@ DECLARE
   answer_table TEXT := format('%I.community_answers', current_schema());
   comment_table TEXT := format('%I.community_comments', current_schema());
 BEGIN
-  IF to_regclass(answer_table) IS NULL OR to_regclass(comment_table) IS NULL THEN
+  -- 앞 마이그레이션과 같은 3분기: 둘 다 없음=스킵 / 비대칭=실패(fail-open 금지) / 둘 다 있음=실행.
+  IF to_regclass(answer_table) IS NULL AND to_regclass(comment_table) IS NULL THEN
     RAISE NOTICE 'Skipping community content soft-delete validation: %.community_answers/comments is absent',
       schema_name;
     RETURN;
+  ELSIF to_regclass(answer_table) IS NULL OR to_regclass(comment_table) IS NULL THEN
+    RAISE EXCEPTION 'asymmetric community tables in schema % (answers: %, comments: %)',
+      schema_name, to_regclass(answer_table) IS NOT NULL, to_regclass(comment_table) IS NOT NULL;
   END IF;
 
   EXECUTE format(
