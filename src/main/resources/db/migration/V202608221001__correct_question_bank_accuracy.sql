@@ -1291,21 +1291,9 @@ WHERE md5(content) = '2774f115d7a678ed7b963b7ca4a326dc';
    AND q.options = v.expected_options
    AND q.answer_key = v.expected_answer_key;
   IF matched <> 155 THEN
-    DECLARE
-      crlf INTEGER; cr_only INTEGER; sample TEXT;
-    BEGIN
-      SELECT count(*) INTO crlf FROM question_bank
-      WHERE content LIKE '%' || chr(13) || chr(10) || '%';
-      SELECT count(*) INTO cr_only FROM question_bank
-      WHERE content LIKE '%' || chr(13) || '%';
-      -- id 694(useLayoutEffect 재작성)의 실제 저장 content 를 개행 마커로 노출
-      SELECT replace(replace(substring(q.content, 1, 260), chr(13), '<CR>'), chr(10), '<LF>')
-        INTO sample
-      FROM question_bank q
-      WHERE q.content LIKE '%useLayoutEffect%' LIMIT 1;
-      RAISE EXCEPTION 'incomplete %/155 crlf_rows=% cr_rows=% sample=%',
-        matched, crlf, cr_only, sample;
-    END;
+    RAISE EXCEPTION
+      'question_bank accuracy correction incomplete: %/155 corrected rows present',
+      matched;
   END IF;
 END
 $qb_correct_202608221001$;
