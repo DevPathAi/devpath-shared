@@ -50,10 +50,10 @@ jobs:
           DB_URL: jdbc:postgresql://localhost:5432/devpath
           DB_USER: devpath
           DB_PASSWORD: localdev
-      - name: Verify exact ET10 JAR, POM, and Gradle module bytes
+      - name: Verify exact ET11 JAR, POM, and Gradle module bytes
         run: >-
           python3 scripts/release/immutable_shared_package.py verify-local
-          --jar build/libs/devpath-shared-0.0.1-et10.20260820.jar
+          --jar build/libs/devpath-shared-0.0.1-et11.20260822.jar
           --pom build/publications/maven/pom-default.xml
           --module build/publications/maven/module.json
       - name: Retain the verified publication bytes for PR inspection
@@ -61,7 +61,7 @@ jobs:
         with:
           name: immutable-shared-publication-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            build/libs/devpath-shared-0.0.1-et10.20260820.jar
+            build/libs/devpath-shared-0.0.1-et11.20260822.jar
             build/publications/maven/pom-default.xml
             build/publications/maven/module.json
           if-no-files-found: error
