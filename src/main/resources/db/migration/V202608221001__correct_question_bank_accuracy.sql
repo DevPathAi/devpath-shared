@@ -19,11 +19,26 @@
 -- 이 마이그레이션은 운영에서 no-op 이고 신규·개발 환경에서만 실제로 갱신한다.
 -- 근거·판정 자료: documents/docs/reports/2026-08-22-question-bank-accuracy-audit.md
 --   (defects.json · key-fixes.sql · rewrites.sql)
+--
+-- 전체를 to_regclass 가드된 DO 블록으로 감싼다 — 스테이지드 마이그레이션
+-- 테스트(AiReviewIdempotencyMigrationTest 등)는 question_bank 가 없는 부분
+-- 스키마에 baseline 이후 체인을 적용하므로, 테이블이 없으면 건너뛴다
+-- (V202608161006 등과 같은 관례).
 
--- 0단계: content 개행 정규화 (CRLF → LF)
-UPDATE question_bank
-SET content = replace(content, chr(13) || chr(10), chr(10))
-WHERE content LIKE '%' || chr(13) || '%';
+DO $qb_correct_202608221001$
+DECLARE
+  matched INTEGER;
+BEGIN
+  IF to_regclass(format('%I.question_bank', current_schema())) IS NULL THEN
+    RAISE NOTICE 'Skipping question_bank accuracy correction: %.question_bank is absent',
+      current_schema();
+    RETURN;
+  END IF;
+
+  -- 0단계: content 개행 정규화 (CRLF → LF)
+  UPDATE question_bank
+  SET content = replace(content, chr(13) || chr(10), chr(10))
+  WHERE content LIKE '%' || chr(13) || '%';
 
 -- id(운영) 504 BACKEND_SPRING: 재작성
 UPDATE question_bank SET content = 'Kafka에서 컨슈머 그룹의 역할은 무엇인가?', options = '["동일한 토픽의 메시지를 다른 그룹이 받지 못하게 독점적으로 소비한다.","같은 그룹 내에서 각 컨슈머는 서로 다른 파티션을 나누어 소비한다.","같은 그룹의 모든 컨슈머가 모든 메시지를 중복으로 수신하도록 보장한다.","컨슈머 그룹은 한 번에 하나의 토픽만 구독할 수 있다."]', answer_key = '{"correct":1}'
@@ -1110,12 +1125,9 @@ for order in orders:
         print(campaign.name)', options = '["select_related(''coupon'')는 coupon 필드가 null인 주문을 만나는 순간 예외를 던져버려서 이 쿼리 자체가 실행 도중 실패한다고 오해하기 쉽다. 실제로는 nullable FK에도 select_related가 정상적으로 동작한다.","coupon__campaigns가 역참조(reverse FK) 또는 M2M 관계라면 select_related가 따라갈 수 없는 경로이므로 쿼리셋 평가 시점에 FieldError(''Invalid field name(s) given in select_related'')가 발생한다. 이런 관계는 prefetch_related(''coupon__campaigns'')로 가져와야 한다.","coupon이 nullable FK이니 select_related가 항상 INNER JOIN을 강제해서 coupon이 없는 주문은 결과 집합에서 자동으로 완전히 제외되고 반환되지 않는다고 잘못 알려져 있다. 실제로는 LEFT OUTER JOIN을 사용한다.","select_related에 필드를 여러 개 한꺼번에 넘기면 두 번째 인자부터는 조용히 무시되어 coupon만 조인되고 campaigns는 애초에 요청조차 되지 않는다고 오해하기 쉽다. 실제로는 두 필드 모두 처리를 시도한다."]', answer_key = '{"correct":1}'
 WHERE md5(content) = '2774f115d7a678ed7b963b7ca4a326dc';
 
--- 검증(양성): 교정된 155건이 전부 기대 상태로 존재해야 한다.
--- (V202608131001·V202608141002 뒤에만 실행되므로 시드는 반드시 존재한다.)
-DO $qb_correct_202608221001$
-DECLARE
-  matched INTEGER;
-BEGIN
+  -- 검증(양성): 교정된 155건이 전부 기대 상태로 존재해야 한다.
+  -- (V202608131001·V202608141002 뒤에만 실행되므로, 테이블이 있는 스키마라면
+  --  시드도 반드시 존재한다.)
   SELECT count(*) INTO matched
   FROM (VALUES
     ('8d8679ff684eac2be2b7cacbe03f00ec','["동일한 토픽의 메시지를 다른 그룹이 받지 못하게 독점적으로 소비한다.","같은 그룹 내에서 각 컨슈머는 서로 다른 파티션을 나누어 소비한다.","같은 그룹의 모든 컨슈머가 모든 메시지를 중복으로 수신하도록 보장한다.","컨슈머 그룹은 한 번에 하나의 토픽만 구독할 수 있다."]'::jsonb,'{"correct":1}'::jsonb),
