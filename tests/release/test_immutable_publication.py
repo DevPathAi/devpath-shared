@@ -569,3 +569,6 @@ class MigrationReleaseGateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+# 2026-08-21: et9 게시 재트리거용 무해 주석 — publish.yml 의 one-shot(attempt=1) 규칙 때문에
+# 승인 게이트에서 소진된 run 은 재실행할 수 없어, 트리거 경로의 이 파일로 새 push 이벤트를 만든다.
