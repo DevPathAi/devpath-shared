@@ -59,6 +59,10 @@ dependencies {
 
 tasks.withType<Test> {
 	useJUnitPlatform()
+	// CI 로그만으로 실패 원인(SQL 오류 메시지 등)을 진단할 수 있게 예외 전문을 출력한다.
+	testLogging {
+		exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+	}
 }
 
 // Flyway CLI image needs only the Java migration classes. Keeping SQL resources out of this
