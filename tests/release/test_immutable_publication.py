@@ -39,8 +39,8 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
         self.assertEqual(
             {
                 "devpath-shared-0.0.1-et11.20260822.jar": (
-                    1_229_362,
-                    "4ea08b9f6451a166313c72283c5fac29a8b34cb54d4591c8c93e52b1adc2e1dd",
+                    1_229_365,
+                    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e",
                 ),
                 "devpath-shared-0.0.1-et11.20260822.pom": (
                     1_547,
@@ -48,7 +48,7 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
                 ),
                 "devpath-shared-0.0.1-et11.20260822.module": (
                     2_893,
-                    "951b43fbaf45b472db538fb54dc20d765fbc37091462bf941b68de1ee2acd3b9",
+                    "94f4af984231fe4b990091fd4575942a0626ef8aadae23e1cfe4f12a4b5d3acf",
                 ),
             },
             {name: (spec.size, spec.sha256) for name, spec in PACKAGE.ARTIFACTS.items()},
@@ -424,7 +424,7 @@ class MigrationReleaseGateTest(unittest.TestCase):
                 "source_sha": self.source_sha,
                 "shared_version": "0.0.1-et11.20260822",
                 "shared_jar_sha256": (
-                    "4ea08b9f6451a166313c72283c5fac29a8b34cb54d4591c8c93e52b1adc2e1dd"
+                    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e"
                 ),
                 "image_repository": "ghcr.io/devpathai/devpath-migration",
                 "image_digest": "sha256:" + "a" * 64,

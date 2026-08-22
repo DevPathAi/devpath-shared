@@ -730,7 +730,7 @@ UPDATE question_bank SET content = 'CI/CD 파이프라인에서, 새 버전을 �
 WHERE md5(content) = 'b9ca8dda37b6fbe5b2606269e15d8b31';
 
 -- id(운영) 811 DEVOPS: 재작성
-UPDATE question_bank SET content = 'Prometheus 메트릭 타입 중, 값이 증가만 하고 감소하지 않는(프로세스 재시작 시 0으로 리셋될 수는 있음) 누적 값을 표현하는 타입은?', options = '["Counter","Gauge","Histogram","Summary"]', answer_key = '{"correct":0}'
+UPDATE question_bank SET content = 'Prometheus 메트릭 타입 중, 값이 증가만 하고 감소하지 않는(프로세스 재시작 시 0으로 리셋될 수는 있음) 누적 값을 표현하는 타입은?', options = '["Counter","Gauge","Histogram","Untyped"]', answer_key = '{"correct":0}'
 WHERE md5(content) = '2fcf749836371d7d868cf9c319e610f6';
 
 -- id(운영) 813 DEVOPS: 키 교정 0 -> 3
