@@ -22,11 +22,11 @@ import xml.etree.ElementTree as ET
 
 GROUP_ID = "ai.devpath"
 ARTIFACT_ID = "devpath-shared"
-VERSION = "0.0.1-et9.20260816"
+VERSION = "0.0.1-et10.20260820"
 REPOSITORY = "DevPathAi/devpath-shared"
 MAVEN_BASE_URL = (
     "https://maven.pkg.github.com/DevPathAi/devpath-shared/"
-    "ai/devpath/devpath-shared/0.0.1-et9.20260816"
+    "ai/devpath/devpath-shared/0.0.1-et10.20260820"
 )
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -44,18 +44,18 @@ class ArtifactSpec(NamedTuple):
 ARTIFACTS = {
     f"{ARTIFACT_ID}-{VERSION}.jar": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.jar",
-        1_177_131,
-        "94e2adb769790d813a872163347ede20ad4c75ae88e5811df2ec6625a340f21f",
+        1_180_039,
+        "0f74ac34ae08fdf6ffeb7903dc1a17775ddca7c0fa67171a2f217d71887bf544",
     ),
     f"{ARTIFACT_ID}-{VERSION}.pom": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.pom",
-        1_546,
-        "10daef2cdf7d436f952fa6dab10a27253a933af013093bb6967dd220010dbdd7",
+        1_547,
+        "66493604f82501a142bee1605594bdeecb897b1aba5cd5750734b28e9ce8e66a",
     ),
     f"{ARTIFACT_ID}-{VERSION}.module": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.module",
-        2_888,
-        "8c6445b67a674f8f65087728c5e602d9d3e06dd3c1a5bdbbe6d8f2d55779531c",
+        2_893,
+        "8f0b872acc0097e09a0a1043faa3693a2a84b5c1ec9cb6305cc897e04d4ad64b",
     ),
 }
 
