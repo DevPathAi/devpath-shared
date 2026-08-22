@@ -44,8 +44,8 @@ class ArtifactSpec(NamedTuple):
 ARTIFACTS = {
     f"{ARTIFACT_ID}-{VERSION}.jar": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.jar",
-        1_229_362,
-        "4ea08b9f6451a166313c72283c5fac29a8b34cb54d4591c8c93e52b1adc2e1dd",
+        1_229_365,
+        "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e",
     ),
     f"{ARTIFACT_ID}-{VERSION}.pom": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.pom",
@@ -55,7 +55,7 @@ ARTIFACTS = {
     f"{ARTIFACT_ID}-{VERSION}.module": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.module",
         2_893,
-        "951b43fbaf45b472db538fb54dc20d765fbc37091462bf941b68de1ee2acd3b9",
+        "94f4af984231fe4b990091fd4575942a0626ef8aadae23e1cfe4f12a4b5d3acf",
     ),
 }
 
