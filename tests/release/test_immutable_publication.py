@@ -35,20 +35,20 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
     def test_frozen_coordinate_and_linux_publication_bytes(self) -> None:
         self.assertEqual("ai.devpath", PACKAGE.GROUP_ID)
         self.assertEqual("devpath-shared", PACKAGE.ARTIFACT_ID)
-        self.assertEqual("0.0.1-et9.20260816", PACKAGE.VERSION)
+        self.assertEqual("0.0.1-et10.20260820", PACKAGE.VERSION)
         self.assertEqual(
             {
-                "devpath-shared-0.0.1-et9.20260816.jar": (
-                    1_177_131,
-                    "94e2adb769790d813a872163347ede20ad4c75ae88e5811df2ec6625a340f21f",
+                "devpath-shared-0.0.1-et10.20260820.jar": (
+                    1_180_039,
+                    "0f74ac34ae08fdf6ffeb7903dc1a17775ddca7c0fa67171a2f217d71887bf544",
                 ),
-                "devpath-shared-0.0.1-et9.20260816.pom": (
-                    1_546,
-                    "10daef2cdf7d436f952fa6dab10a27253a933af013093bb6967dd220010dbdd7",
+                "devpath-shared-0.0.1-et10.20260820.pom": (
+                    1_547,
+                    "66493604f82501a142bee1605594bdeecb897b1aba5cd5750734b28e9ce8e66a",
                 ),
-                "devpath-shared-0.0.1-et9.20260816.module": (
-                    2_888,
-                    "8c6445b67a674f8f65087728c5e602d9d3e06dd3c1a5bdbbe6d8f2d55779531c",
+                "devpath-shared-0.0.1-et10.20260820.module": (
+                    2_893,
+                    "8f0b872acc0097e09a0a1043faa3693a2a84b5c1ec9cb6305cc897e04d4ad64b",
                 ),
             },
             {name: (spec.size, spec.sha256) for name, spec in PACKAGE.ARTIFACTS.items()},
@@ -72,16 +72,16 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
             b"<modelVersion>4.0.0</modelVersion>"
             b"<groupId>ai.devpath</groupId>"
             b"<artifactId>devpath-shared</artifactId>"
-            b"<version>0.0.1-et9.20260816</version></project>\n"
+            b"<version>0.0.1-et10.20260820</version></project>\n"
         )
         module = (
             b'{"component":{"group":"ai.devpath","module":"devpath-shared",'
-            b'"version":"0.0.1-et9.20260816"},"variants":[]}\n'
+            b'"version":"0.0.1-et10.20260820"},"variants":[]}\n'
         )
         PACKAGE.validate_pom_semantics(pom)
         PACKAGE.validate_module_semantics(module)
         with self.assertRaises(PACKAGE.VerificationError):
-            PACKAGE.validate_pom_semantics(pom.replace(b"et9", b"et8"))
+            PACKAGE.validate_pom_semantics(pom.replace(b"et10", b"et9"))
         with self.assertRaises(PACKAGE.VerificationError):
             PACKAGE.validate_module_semantics(module.replace(b"devpath-shared", b"other"))
 
@@ -422,15 +422,15 @@ class MigrationReleaseGateTest(unittest.TestCase):
             "shared_migration": {
                 "repository": "DevPathAi/devpath-shared",
                 "source_sha": self.source_sha,
-                "shared_version": "0.0.1-et9.20260816",
+                "shared_version": "0.0.1-et10.20260820",
                 "shared_jar_sha256": (
-                    "94e2adb769790d813a872163347ede20ad4c75ae88e5811df2ec6625a340f21f"
+                    "0f74ac34ae08fdf6ffeb7903dc1a17775ddca7c0fa67171a2f217d71887bf544"
                 ),
                 "image_repository": "ghcr.io/devpathai/devpath-migration",
                 "image_digest": "sha256:" + "a" * 64,
-                "flyway_target": "202608161011",
+                "flyway_target": "202608201002",
                 "required_migration": (
-                    "V202608161011__validate_lcs_mentor_snapshot_contract.sql"
+                    "V202608201002__validate_community_content_soft_delete.sql"
                 ),
                 "rollback_policy": "additive-retained",
             },
