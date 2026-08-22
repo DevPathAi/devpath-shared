@@ -42,13 +42,13 @@ MAX_EVIDENCE_BYTES = 16_384
 MAX_KUSTOMIZATION_BYTES = 65_536
 MAX_JOB_BYTES = 262_144
 MAX_RENDER_BYTES = 2_000_000
-SHARED_VERSION = "0.0.1-et9.20260816"
+SHARED_VERSION = "0.0.1-et10.20260820"
 SHARED_JAR_SHA256 = (
-    "94e2adb769790d813a872163347ede20ad4c75ae88e5811df2ec6625a340f21f"
+    "0f74ac34ae08fdf6ffeb7903dc1a17775ddca7c0fa67171a2f217d71887bf544"
 )
 IMAGE_REPOSITORY = "ghcr.io/devpathai/devpath-migration"
-FLYWAY_TARGET = "202608161011"
-REQUIRED_MIGRATION = "V202608161011__validate_lcs_mentor_snapshot_contract.sql"
+FLYWAY_TARGET = "202608201002"
+REQUIRED_MIGRATION = "V202608201002__validate_community_content_soft_delete.sql"
 ROLLBACK_POLICY = "additive-retained"
 RELEASE_ID = re.compile(r"^ms-[0-9]{8}-[a-z0-9][a-z0-9-]{2,40}$")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")

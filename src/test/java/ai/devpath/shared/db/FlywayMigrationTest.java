@@ -950,4 +950,126 @@ class FlywayMigrationTest {
       }
     }
   }
+
+  /** 답변·댓글 소프트 삭제 상태 컬럼이 존재하고 기본값이 PUBLISHED 여야 한다. */
+  @Test
+  void communityAnswerAndCommentHaveSoftDeleteStatus() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      try (var rs = st.executeQuery(
+          "SELECT column_default, is_nullable FROM information_schema.columns "
+              + "WHERE table_name='community_answers' AND column_name='status'")) {
+        assertTrue(rs.next(), "community_answers.status 가 존재해야 한다");
+        assertTrue(rs.getString(1).contains("PUBLISHED"), "기본값이 PUBLISHED 여야 한다");
+        assertEquals("NO", rs.getString(2), "NOT NULL 이어야 한다");
+      }
+      try (var rs = st.executeQuery(
+          "SELECT column_default, is_nullable FROM information_schema.columns "
+              + "WHERE table_name='community_comments' AND column_name='status'")) {
+        assertTrue(rs.next(), "community_comments.status 가 존재해야 한다");
+        assertTrue(rs.getString(1).contains("PUBLISHED"), "기본값이 PUBLISHED 여야 한다");
+        assertEquals("NO", rs.getString(2), "NOT NULL 이어야 한다");
+      }
+    }
+  }
+
+  /** 상태 CHECK 가 어휘 밖의 값을 막아야 한다. DRAFT 는 답변·댓글에 없다. */
+  @Test
+  void communityContentStatusCheckRejectsUnknownValues() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      st.execute("INSERT INTO community_posts(author_id,board_type,title,body_md) "
+          + "VALUES (900001,'QNA','상태검증','본문')");
+      long postId;
+      try (var rs = st.executeQuery(
+          "SELECT id FROM community_posts WHERE author_id=900001 ORDER BY id DESC LIMIT 1")) {
+        assertTrue(rs.next());
+        postId = rs.getLong(1);
+      }
+      st.execute("INSERT INTO community_questions(post_id) VALUES (" + postId + ")");
+      final long qid = postId;
+      // 대조군을 먼저 세운다. 이 삽입이 성공해야 "거부" 관측이 CHECK 때문이라고 말할 수 있다 —
+      // status 컬럼 자체가 없어도 아래 assertThrows 는 통과하므로, 이것이 없으면 판별력이 0이다.
+      st.execute("INSERT INTO community_answers(question_id,author_id,body_md,status) "
+          + "VALUES (" + qid + ",900002,'답변','HIDDEN')");
+      st.execute("INSERT INTO community_comments(post_id,author_id,body_md,status) "
+          + "VALUES (" + qid + ",900002,'댓글','DELETED')");
+      assertThrows(java.sql.SQLException.class, () -> st.execute(
+          "INSERT INTO community_answers(question_id,author_id,body_md,status) "
+              + "VALUES (" + qid + ",900002,'답변','DRAFT')"));
+      assertThrows(java.sql.SQLException.class, () -> st.execute(
+          "INSERT INTO community_comments(post_id,author_id,body_md,status) "
+              + "VALUES (" + qid + ",900002,'댓글','GONE')"));
+      // 제약이 "존재" 를 넘어 "검증까지 끝난 정확한 어휘" 인지 단언한다. 이것이 없으면
+      // V202608201002(VALIDATE) 를 통째로 비워도 스위트가 green 이다 — NOT VALID 제약도
+      // 새 행은 거부하므로 위의 assertThrows 만으로는 구분하지 못한다. convalidated 단언은
+      // 이 레포의 다른 마이그레이션 테스트 다섯 곳에 이미 있는 관행이다.
+      // ★대상 릴레이션에 묶고, 어휘는 "부분 문자열" 이 아니라 "리터럴 집합의 동일성" 으로
+      // 단언한다★ — substring 이면 'ARCHIVED' 를 넣어 넓혀도, 다른 스키마의 동명 제약이
+      // 걸려도 통과한다(외부 리뷰 지적, 실측 확인).
+      try (var rs = st.executeQuery(
+          "SELECT conname, convalidated, pg_get_constraintdef(oid) FROM pg_constraint "
+              + "WHERE conrelid IN ('community_answers'::regclass,"
+              + " 'community_comments'::regclass) "
+              + "AND conname IN ('chk_community_answers_status',"
+              + "'chk_community_comments_status')")) {
+        int seen = 0;
+        while (rs.next()) {
+          seen++;
+          assertTrue(rs.getBoolean(2), rs.getString(1) + " 는 기존 행 검증까지 끝나야 한다");
+          String def = rs.getString(3);
+          var literals = new java.util.TreeSet<String>();
+          var m = java.util.regex.Pattern.compile("'([A-Z_]+)'").matcher(def);
+          while (m.find()) {
+            literals.add(m.group(1));
+          }
+          assertEquals(java.util.Set.of("DELETED", "HIDDEN", "PUBLISHED"), literals,
+              rs.getString(1) + " 어휘는 정확히 세 값이어야 한다: " + def);
+        }
+        assertEquals(2, seen, "답변·댓글 상태 제약이 모두 있어야 한다");
+      }
+      st.execute("DELETE FROM community_comments WHERE post_id=" + postId);
+      st.execute("DELETE FROM community_answers WHERE question_id=" + postId);
+      st.execute("DELETE FROM community_questions WHERE post_id=" + postId);
+      st.execute("DELETE FROM community_posts WHERE id=" + postId);
+    }
+  }
+
+  /**
+   * 리비전 테이블 — ★대조군(유효 삽입)을 먼저 세워야 "거부" 가 CHECK 때문이라 말할 수 있다★.
+   * 이전 형태(count(*)=8 + 대조군 없는 assertThrows)는 body_md 를 다른 이름으로 바꿔도
+   * undefined-column 예외가 assertThrows 를 만족해 통과했다.
+   */
+  @Test
+  void communityContentRevisionsTableExistsWithTargetCheck() throws Exception {
+    migrate();
+    try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+      // 대조군: 세 대상 유형이 실제 컬럼 이름으로 들어간다 — 컬럼 정체성 검증을 겸한다.
+      st.execute("INSERT INTO community_content_revisions"
+          + "(target_type,target_id,title,body_md,body_html,edited_by) "
+          + "VALUES ('POST',910001,'옛제목','옛본문','<p>옛본문</p>',7)");
+      st.execute("INSERT INTO community_content_revisions"
+          + "(target_type,target_id,body_md,edited_by) VALUES ('ANSWER',910001,'옛답변',7)");
+      st.execute("INSERT INTO community_content_revisions"
+          + "(target_type,target_id,body_md,edited_by) VALUES ('COMMENT',910001,'옛댓글',7)");
+
+      java.sql.SQLException bad = assertThrows(java.sql.SQLException.class, () -> st.execute(
+          "INSERT INTO community_content_revisions(target_type,target_id,body_md,edited_by) "
+              + "VALUES ('QUESTION',910001,'본문',7)"));
+      assertEquals("23514", bad.getSQLState(),
+          "거부는 CHECK 위반이어야 한다(undefined column 이면 여기서 갈린다)");
+      assertTrue(bad.getMessage().contains("chk_community_revisions_target"),
+          "우리가 세운 그 제약이어야 한다: " + bad.getMessage());
+
+      try (var rs = st.executeQuery(
+          "SELECT indexdef FROM pg_indexes WHERE indexname='idx_community_revisions_target'")) {
+        assertTrue(rs.next(), "대상별 조회 인덱스가 있어야 한다");
+        String def = rs.getString(1);
+        assertTrue(def.contains("target_type") && def.contains("target_id")
+                && def.contains("created_at DESC"), def);
+      }
+
+      st.execute("DELETE FROM community_content_revisions WHERE target_id = 910001");
+    }
+  }
 }
