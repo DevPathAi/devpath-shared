@@ -352,9 +352,36 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             )
 
     def test_gitops_app_scope_and_rulesets_are_exact(self) -> None:
+        app = {"id": 4242, "slug": "devpath-gitops-release"}
         repositories = {
             "total_count": 1,
-            "repositories": [{"full_name": "DevPathAi/devpath-gitops"}],
+            "repositories": [
+                {
+                    "id": 42,
+                    "full_name": "DevPathAi/devpath-gitops",
+                    "archived": False,
+                }
+            ],
+        }
+        classic = {
+            "required_status_checks": None,
+            "restrictions": {"users": [], "teams": [], "apps": [app]},
+            "required_pull_request_reviews": {
+                "dismiss_stale_reviews": True,
+                "require_code_owner_reviews": False,
+                "required_approving_review_count": 1,
+                "require_last_push_approval": True,
+                "bypass_pull_request_allowances": {
+                    "users": [],
+                    "teams": [],
+                    "apps": [app],
+                },
+            },
+            "enforce_admins": {"enabled": True},
+            "required_linear_history": {"enabled": True},
+            "required_conversation_resolution": {"enabled": True},
+            "allow_force_pushes": {"enabled": False},
+            "allow_deletions": {"enabled": False},
         }
         integrity = {
             "id": 1001,
@@ -392,35 +419,9 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             },
             "rules": [
                 {
-                    "type": "pull_request",
-                    "parameters": {
-                        "allowed_merge_methods": ["squash"],
-                        "dismiss_stale_reviews_on_push": True,
-                        "dismissal_restriction": {
-                            "enabled": False,
-                            "allowed_actors": [],
-                        },
-                        "require_code_owner_review": False,
-                        "require_last_push_approval": True,
-                        "required_approving_review_count": 1,
-                        "required_review_thread_resolution": True,
-                        "required_reviewers": [],
-                    },
-                },
-                {
-                    "type": "required_status_checks",
-                    "parameters": {
-                        "do_not_enforce_on_create": False,
-                        "required_status_checks": [
-                            {
-                                "context": "mission-spine-release-contract",
-                                "integration_id": 15368,
-                            },
-                            {"context": "kustomize", "integration_id": 15368},
-                        ],
-                        "strict_required_status_checks_policy": True,
-                    },
-                },
+                    "type": "update",
+                    "parameters": {"update_allows_fetch_and_merge": False},
+                }
             ],
         }
         rulesets = [
@@ -441,171 +442,113 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                 },
             ]
         ]
+
+        def validate(**overrides):
+            details = overrides.get("details", (integrity, governance))
+            return MIGRATION.validate_gitops_authorization(
+                app_slug=overrides.get("app_slug", "devpath-gitops-release"),
+                app_id=overrides.get("app_id", "4242"),
+                installation_id=overrides.get("installation_id", "7654321"),
+                repositories_raw=canonical(
+                    overrides.get("repositories", repositories)
+                ),
+                classic_protection_status=overrides.get("classic_status", "200"),
+                classic_protection_raw=canonical(
+                    overrides.get("classic_protection", classic)
+                ),
+                rulesets_raw=canonical(overrides.get("rulesets", rulesets)),
+                ruleset_details_raw=tuple(canonical(document) for document in details),
+            )
+
         self.assertEqual(
             {
                 "write_app_slug": "devpath-gitops-release",
                 "write_app_id": 4242,
                 "write_app_installation_id": 7654321,
             },
-            MIGRATION.validate_gitops_authorization(
-                app_slug="devpath-gitops-release",
-                app_id="4242",
-                installation_id="7654321",
-                repositories_raw=canonical(repositories),
-                classic_protection_status="404",
-                rulesets_raw=canonical(rulesets),
-                ruleset_details_raw=(canonical(integrity), canonical(governance)),
-            ),
+            validate(),
         )
 
-        with self.assertRaises(MIGRATION.GateError):
-            MIGRATION.validate_gitops_authorization(
-                app_slug="devpath-gitops-release",
-                app_id="4242",
-                installation_id="0",
-                repositories_raw=canonical(repositories),
-                classic_protection_status="404",
-                rulesets_raw=canonical(rulesets),
-                ruleset_details_raw=(canonical(integrity), canonical(governance)),
-            )
+        hidden_integrity = copy.deepcopy(integrity)
+        hidden_governance = copy.deepcopy(governance)
+        del hidden_integrity["bypass_actors"]
+        del hidden_governance["bypass_actors"]
+        hidden_integrity["current_user_can_bypass"] = "never"
+        hidden_governance["current_user_can_bypass"] = "always"
+        validate(details=(hidden_integrity, hidden_governance))
 
-        bad_cases: list[
-            tuple[
-                str,
-                str,
-                str,
-                dict[str, object],
-                str,
-                list[list[dict[str, object]]],
-                tuple[dict[str, object], dict[str, object]],
-            ]
-        ] = []
-        changed_repositories = copy.deepcopy(repositories)
-        changed_repositories["total_count"] = 2
-        changed_repositories["repositories"].append(
-            {"full_name": "DevPathAi/another-repository"}
-        )
+        omitted_update_parameters = copy.deepcopy(governance)
+        omitted_update_parameters["rules"] = [{"type": "update"}]
+        validate(details=(integrity, omitted_update_parameters))
+
+        omitted_classic_checks = copy.deepcopy(classic)
+        del omitted_classic_checks["required_status_checks"]
+        validate(classic_protection=omitted_classic_checks)
+
+        disabled_dismissal = copy.deepcopy(classic)
+        disabled_dismissal["required_pull_request_reviews"][
+            "dismissal_restrictions"
+        ] = {"users": [], "teams": [], "apps": []}
+        validate(classic_protection=disabled_dismissal)
+
+        bad_cases = []
+        changed = copy.deepcopy(hidden_governance)
+        del changed["current_user_can_bypass"]
         bad_cases.append(
             (
-                "repository-scope",
-                "devpath-gitops-release",
-                "4242",
-                changed_repositories,
-                "404",
-                rulesets,
-                (integrity, governance),
+                "hidden-governance-without-proof",
+                {"details": (integrity, changed)},
             )
         )
-        bad_cases.append(
-            (
-                "app-id-output",
-                "devpath-gitops-release",
-                "0",
-                repositories,
-                "404",
-                rulesets,
-                (integrity, governance),
-            )
-        )
-        changed_integrity = copy.deepcopy(integrity)
-        changed_integrity["bypass_actors"] = [
+        changed = copy.deepcopy(hidden_integrity)
+        changed["current_user_can_bypass"] = "always"
+        bad_cases.append(("integrity-bypass", {"details": (changed, governance)}))
+        changed = copy.deepcopy(governance)
+        changed["bypass_actors"].append(
             {"actor_id": 1, "actor_type": "User", "bypass_mode": "always"}
-        ]
-        bad_cases.append(
-            (
-                "integrity-bypass",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                rulesets,
-                (changed_integrity, governance),
-            )
         )
-        changed_integrity = copy.deepcopy(integrity)
-        del changed_integrity["target"]
-        bad_cases.append(
-            (
-                "detail-missing-target",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                rulesets,
-                (changed_integrity, governance),
-            )
-        )
-        changed_governance = copy.deepcopy(governance)
-        changed_governance["bypass_actors"] = []
-        bad_cases.append(
-            (
-                "hidden-bypass",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                rulesets,
-                (integrity, changed_governance),
-            )
-        )
-        changed_governance = copy.deepcopy(governance)
-        changed_governance["rules"][0]["parameters"][
+        bad_cases.append(("extra-bypass-actor", {"details": (integrity, changed)}))
+        changed = copy.deepcopy(governance)
+        changed["rules"][0]["parameters"]["update_allows_fetch_and_merge"] = True
+        bad_cases.append(("fetch-and-merge", {"details": (integrity, changed)}))
+        changed = copy.deepcopy(governance)
+        changed["rules"] = [{"type": "pull_request"}]
+        bad_cases.append(("human-pr-governance", {"details": (integrity, changed)}))
+        changed = copy.deepcopy(classic)
+        changed["required_status_checks"] = {}
+        bad_cases.append(("classic-status-checks", {"classic_protection": changed}))
+        changed = copy.deepcopy(classic)
+        changed["restrictions"]["apps"] = []
+        bad_cases.append(("classic-app-only-push", {"classic_protection": changed}))
+        changed = copy.deepcopy(classic)
+        changed["required_pull_request_reviews"][
             "require_last_push_approval"
         ] = False
-        bad_cases.append(
-            (
-                "pr-policy",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                rulesets,
-                (integrity, changed_governance),
-            )
-        )
-        changed_governance = copy.deepcopy(governance)
-        changed_governance["rules"][0]["parameters"][
+        bad_cases.append(("classic-reviews", {"classic_protection": changed}))
+        changed = copy.deepcopy(classic)
+        changed["required_pull_request_reviews"][
             "required_approving_review_count"
         ] = True
-        bad_cases.append(
-            (
-                "json-type-confusion",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                rulesets,
-                (integrity, changed_governance),
-            )
-        )
-        changed_governance = copy.deepcopy(governance)
-        changed_governance["rules"][1]["parameters"]["required_status_checks"][
-            0
-        ]["integration_id"] = -1
-        bad_cases.append(
-            (
-                "check-provider",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                rulesets,
-                (integrity, changed_governance),
-            )
-        )
-        changed_rulesets = copy.deepcopy(rulesets)
-        changed_rulesets[0].append(copy.deepcopy(changed_rulesets[0][0]))
-        bad_cases.append(
-            (
-                "extra-effective-ruleset",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                changed_rulesets,
-                (integrity, governance),
-            )
-        )
+        bad_cases.append(("classic-json-type", {"classic_protection": changed}))
+        changed = copy.deepcopy(classic)
+        changed["required_pull_request_reviews"]["dismissal_restrictions"] = {
+            "users": [],
+            "teams": [],
+            "apps": [app],
+        }
+        bad_cases.append(("classic-dismissal", {"classic_protection": changed}))
+        changed = copy.deepcopy(repositories)
+        changed["total_count"] = 2
+        bad_cases.append(("repository-scope", {"repositories": changed}))
+        changed = copy.deepcopy(repositories)
+        changed["repositories"][0]["archived"] = True
+        bad_cases.append(("repository-archived", {"repositories": changed}))
+        changed = copy.deepcopy(rulesets)
+        changed[0].append(copy.deepcopy(changed[0][0]))
+        bad_cases.append(("extra-ruleset", {"rulesets": changed}))
+        changed = copy.deepcopy(integrity)
+        del changed["target"]
+        bad_cases.append(("detail-target", {"details": (changed, governance)}))
         changed_rulesets = copy.deepcopy(rulesets)
         changed_rulesets[0][1]["id"] = changed_rulesets[0][0]["id"]
         changed_governance = copy.deepcopy(governance)
@@ -613,57 +556,23 @@ class MigrationResultEvidenceTest(unittest.TestCase):
         bad_cases.append(
             (
                 "duplicate-ruleset-id",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "404",
-                changed_rulesets,
-                (integrity, changed_governance),
+                {
+                    "rulesets": changed_rulesets,
+                    "details": (integrity, changed_governance),
+                },
             )
         )
-        bad_cases.append(
+        bad_cases.extend(
             (
-                "classic-protection",
-                "devpath-gitops-release",
-                "4242",
-                repositories,
-                "200",
-                rulesets,
-                (integrity, governance),
+                ("classic-absent", {"classic_status": "404"}),
+                ("app-id", {"app_id": "0"}),
+                ("installation-id", {"installation_id": "0"}),
+                ("slug", {"app_slug": "other"}),
             )
         )
-        bad_cases.append(
-            (
-                "slug",
-                "other",
-                "4242",
-                repositories,
-                "404",
-                rulesets,
-                (integrity, governance),
-            )
-        )
-        for (
-            label,
-            slug,
-            app_id,
-            repository_document,
-            classic_status,
-            ruleset_pages,
-            detail_documents,
-        ) in bad_cases:
+        for label, overrides in bad_cases:
             with self.subTest(label=label), self.assertRaises(MIGRATION.GateError):
-                MIGRATION.validate_gitops_authorization(
-                    app_slug=slug,
-                    app_id=app_id,
-                    installation_id="7654321",
-                    repositories_raw=canonical(repository_document),
-                    classic_protection_status=classic_status,
-                    rulesets_raw=canonical(ruleset_pages),
-                    ruleset_details_raw=tuple(
-                        canonical(document) for document in detail_documents
-                    ),
-                )
+                validate(**overrides)
 
     def test_migration_child_must_be_the_exact_single_path_commit(self) -> None:
         self.assertEqual(

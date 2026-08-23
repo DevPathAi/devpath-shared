@@ -23,8 +23,10 @@ GITOPS_BRANCH = "main"
 GITOPS_REF = "refs/heads/main"
 INTEGRITY_RULESET_NAME = "mission-spine-main-integrity"
 GOVERNANCE_RULESET_NAME = "mission-spine-main-governance"
-GITHUB_ACTIONS_INTEGRATION_ID = 15368
-REQUIRED_STATUS_CHECKS = ("mission-spine-release-contract", "kustomize")
+CLASSIC_DISMISSAL_URL = (
+    "https://api.github.com/repos/DevPathAi/devpath-gitops/branches/main/"
+    "protection/dismissal_restrictions"
+)
 WORKFLOW_PATH = ".github/workflows/mission-spine-migration-release.yml"
 WORKFLOW_REF = f"{REPOSITORY}/{WORKFLOW_PATH}@refs/heads/main"
 ENVIRONMENT_NAME = "mission-spine-migration-release"
@@ -823,10 +825,32 @@ def _rules_by_type(
     return result
 
 
+def _require_ruleset_bypass_proof(
+    ruleset: dict[str, object],
+    name: str,
+    expected_can_bypass: str,
+    expected_actors: list[dict[str, object]],
+) -> None:
+    """Validate the exact visible actors or the caller-relative hidden shape.
+
+    GitHub exposes bypass_actors only to callers that can write rulesets. The
+    release App deliberately has Administration read, so its normal response
+    omits that inventory and instead proves only its own bypass capability.
+    """
+    if "bypass_actors" in ruleset:
+        if ruleset["bypass_actors"] != expected_actors:
+            raise GateError(f"{name} ruleset bypass actors are not exact")
+        return
+    if ruleset.get("current_user_can_bypass") != expected_can_bypass:
+        raise GateError(
+            f"{name} caller bypass capability must be {expected_can_bypass} "
+            "when bypass_actors is hidden"
+        )
+
+
 def _validate_integrity_ruleset(ruleset: dict[str, object], ruleset_id: int) -> None:
     _validate_ruleset_header(ruleset, INTEGRITY_RULESET_NAME, ruleset_id)
-    if ruleset.get("bypass_actors") != []:
-        raise GateError("integrity ruleset must have no bypass actors")
+    _require_ruleset_bypass_proof(ruleset, INTEGRITY_RULESET_NAME, "never", [])
     rules = _rules_by_type(
         ruleset, {"deletion", "non_fast_forward", "required_linear_history"}
     )
@@ -839,61 +863,122 @@ def _validate_governance_ruleset(
     ruleset: dict[str, object], ruleset_id: int, app_id: int
 ) -> None:
     _validate_ruleset_header(ruleset, GOVERNANCE_RULESET_NAME, ruleset_id)
-    bypass = ruleset.get("bypass_actors")
-    if not isinstance(bypass, list) or len(bypass) != 1:
-        raise GateError("governance ruleset must expose exactly one bypass actor")
-    _exact_json_value(
-        bypass[0],
-        {
-            "actor_id": app_id,
-            "actor_type": "Integration",
-            "bypass_mode": "always",
-        },
-        "governance ruleset bypass",
-    )
-    rules = _rules_by_type(ruleset, {"pull_request", "required_status_checks"})
-    pull_request = _exact_keys(
-        rules["pull_request"], {"type", "parameters"}, "pull_request rule"
-    )
-    expected_pull_request = {
-        "allowed_merge_methods": ["squash"],
-        "dismiss_stale_reviews_on_push": True,
-        "dismissal_restriction": {"enabled": False, "allowed_actors": []},
-        "require_code_owner_review": False,
-        "require_last_push_approval": True,
-        "required_approving_review_count": 1,
-        "required_review_thread_resolution": True,
-        "required_reviewers": [],
-    }
-    _exact_json_value(
-        pull_request.get("parameters"),
-        expected_pull_request,
-        "governance pull-request parameters",
-    )
-    checks_rule = _exact_keys(
-        rules["required_status_checks"],
-        {"type", "parameters"},
-        "required_status_checks rule",
-    )
-    expected_checks = {
-        "do_not_enforce_on_create": False,
-        "required_status_checks": [
+    _require_ruleset_bypass_proof(
+        ruleset,
+        GOVERNANCE_RULESET_NAME,
+        "always",
+        [
             {
-                "context": REQUIRED_STATUS_CHECKS[0],
-                "integration_id": GITHUB_ACTIONS_INTEGRATION_ID,
-            },
-            {
-                "context": REQUIRED_STATUS_CHECKS[1],
-                "integration_id": GITHUB_ACTIONS_INTEGRATION_ID,
-            },
+                "actor_id": app_id,
+                "actor_type": "Integration",
+                "bypass_mode": "always",
+            }
         ],
-        "strict_required_status_checks_policy": True,
-    }
-    _exact_json_value(
-        checks_rule.get("parameters"),
-        expected_checks,
-        "governance required status checks",
     )
+    update = _rules_by_type(ruleset, {"update"})["update"]
+    # GitHub's live GET omits update parameters even when the configured value
+    # is false. Accept only that observed omission or the exact visible value.
+    if set(update) == {"type"}:
+        if update["type"] != "update":
+            raise GateError("governance update rule is not exact")
+        return
+    if _exact_keys(update, {"type", "parameters"}, "update rule") != {
+        "type": "update",
+        "parameters": {"update_allows_fetch_and_merge": False},
+    }:
+        raise GateError("governance update rule is not exact")
+
+
+def _classic_sole_app(value: object, app_id: int, label: str) -> None:
+    if not isinstance(value, list) or len(value) != 1:
+        raise GateError(
+            f"classic protection {label} must contain the sole release App"
+        )
+    app = value[0]
+    if (
+        not isinstance(app, dict)
+        or app.get("id") != app_id
+        or app.get("slug") != GITOPS_WRITE_APP_SLUG
+    ):
+        raise GateError(
+            f"classic protection {label} must contain the sole release App"
+        )
+
+
+def _classic_app_only_actors(value: object, app_id: int, label: str) -> None:
+    if not isinstance(value, dict):
+        raise GateError(f"classic protection {label} is invalid")
+    if value.get("users") != [] or value.get("teams") != []:
+        raise GateError(f"classic protection {label} users/teams must be empty")
+    _classic_sole_app(value.get("apps"), app_id, f"{label} apps")
+
+
+def _classic_enabled(value: object, expected: bool, label: str) -> None:
+    if not isinstance(value, dict) or value.get("enabled") is not expected:
+        raise GateError(f"classic protection {label} is not exact")
+
+
+def _validate_disabled_dismissal_restrictions(
+    reviews: dict[str, object],
+) -> None:
+    if (
+        "dismissal_restrictions" not in reviews
+        or reviews["dismissal_restrictions"] is None
+    ):
+        return
+    dismissal = reviews["dismissal_restrictions"]
+    metadata = {
+        "url": CLASSIC_DISMISSAL_URL,
+        "users_url": CLASSIC_DISMISSAL_URL + "/users",
+        "teams_url": CLASSIC_DISMISSAL_URL + "/teams",
+    }
+    if (
+        not isinstance(dismissal, dict)
+        or not {"users", "teams", "apps"}.issubset(dismissal)
+        or not set(dismissal).issubset({"users", "teams", "apps", *metadata})
+        or any(dismissal[key] != [] for key in ("users", "teams", "apps"))
+        or any(
+            dismissal.get(key, expected) != expected
+            for key, expected in metadata.items()
+        )
+    ):
+        raise GateError("classic dismissal restrictions must be disabled and exact")
+
+
+def _validate_classic_protection(protection: object, app_id: int) -> None:
+    if not isinstance(protection, dict):
+        raise GateError("classic branch protection response is invalid")
+    if protection.get("required_status_checks") is not None:
+        raise GateError("classic required status checks must be absent or null")
+    _classic_app_only_actors(
+        protection.get("restrictions"), app_id, "push restrictions"
+    )
+    reviews = protection.get("required_pull_request_reviews")
+    if not isinstance(reviews, dict):
+        raise GateError("classic pull-request reviews are missing")
+    if (
+        reviews.get("dismiss_stale_reviews") is not True
+        or reviews.get("require_code_owner_reviews") is not False
+        or type(reviews.get("required_approving_review_count")) is not int
+        or reviews["required_approving_review_count"] != 1
+        or reviews.get("require_last_push_approval") is not True
+    ):
+        raise GateError("classic pull-request review parameters are not exact")
+    _validate_disabled_dismissal_restrictions(reviews)
+    _classic_app_only_actors(
+        reviews.get("bypass_pull_request_allowances"), app_id, "PR bypass"
+    )
+    _classic_enabled(
+        protection.get("enforce_admins"), True, "administrator enforcement"
+    )
+    _classic_enabled(protection.get("required_linear_history"), True, "linear history")
+    _classic_enabled(
+        protection.get("required_conversation_resolution"),
+        True,
+        "conversation resolution",
+    )
+    _classic_enabled(protection.get("allow_force_pushes"), False, "force pushes")
+    _classic_enabled(protection.get("allow_deletions"), False, "deletions")
 
 
 def validate_gitops_authorization(
@@ -903,6 +988,7 @@ def validate_gitops_authorization(
     installation_id: str,
     repositories_raw: bytes,
     classic_protection_status: str,
+    classic_protection_raw: bytes,
     rulesets_raw: bytes,
     ruleset_details_raw: Sequence[bytes],
 ) -> dict[str, object]:
@@ -922,10 +1008,17 @@ def validate_gitops_authorization(
         or len(repository_values) != 1
         or not isinstance(repository_values[0], dict)
         or repository_values[0].get("full_name") != GITOPS_REPOSITORY
+        or repository_values[0].get("archived") is not False
+        or type(repository_values[0].get("id")) is not int
+        or repository_values[0]["id"] <= 0
     ):
         raise GateError("GitOps App token is not scoped to exactly devpath-gitops")
-    if classic_protection_status != "404":
-        raise GateError("classic GitOps main branch protection must be absent")
+    if classic_protection_status != "200":
+        raise GateError("classic GitOps main branch protection must be present")
+    _validate_classic_protection(
+        _json_object(classic_protection_raw, "classic GitOps main protection"),
+        expected_app_id,
+    )
 
     pages = _json_array(rulesets_raw, "effective GitOps rulesets")
     flattened: list[dict[str, object]] = []
@@ -1640,6 +1733,7 @@ def _parser() -> argparse.ArgumentParser:
     authorization.add_argument("--installation-id", required=True)
     authorization.add_argument("--repositories", type=Path, required=True)
     authorization.add_argument("--classic-protection-status", required=True)
+    authorization.add_argument("--classic-protection", type=Path, required=True)
     authorization.add_argument("--rulesets", type=Path, required=True)
     authorization.add_argument(
         "--ruleset-detail", type=Path, action="append", required=True
@@ -1742,6 +1836,11 @@ def main(argv: list[str] | None = None) -> int:
                     MAX_API_DOCUMENT_BYTES,
                 ),
                 classic_protection_status=args.classic_protection_status,
+                classic_protection_raw=_read_regular_file(
+                    args.classic_protection,
+                    "classic GitOps main protection",
+                    MAX_API_DOCUMENT_BYTES,
+                ),
                 rulesets_raw=_read_regular_file(
                     args.rulesets, "GitOps rulesets", MAX_API_DOCUMENT_BYTES
                 ),
