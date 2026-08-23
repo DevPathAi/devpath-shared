@@ -109,9 +109,12 @@ jobs:
             >"$auth_dir/classic-protection-response.txt" 2>&1
           classic_exit="$?"
           set -e
-          test "$classic_exit" -ne 0
+          test "$classic_exit" -eq 0
           classic_status="$(awk '$1 ~ /^HTTP\// && $2 ~ /^[0-9][0-9][0-9]$/ { code=$2 } END { print code }' "$auth_dir/classic-protection-response.txt")"
-          test "$classic_status" = "404"
+          test "$classic_status" = "200"
+          gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            'repos/DevPathAi/devpath-gitops/branches/main/protection' \
+            >"$auth_dir/classic-protection.json"
           gh api --paginate --slurp \
             -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
             'repos/DevPathAi/devpath-gitops/rulesets?includes_parents=true&targets=branch&per_page=100' \
@@ -141,6 +144,7 @@ jobs:
             --installation-id "$GITOPS_INSTALLATION_ID" \
             --repositories "$auth_dir/repositories.json" \
             --classic-protection-status "$classic_status" \
+            --classic-protection "$auth_dir/classic-protection.json" \
             --rulesets "$auth_dir/rulesets.json" \
             --ruleset-detail "$auth_dir/ruleset-1.json" \
             --ruleset-detail "$auth_dir/ruleset-2.json" \

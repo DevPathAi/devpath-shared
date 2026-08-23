@@ -88,7 +88,7 @@ jobs:
       - name: Verify exact local publication bytes
         run: >-
           python3 scripts/release/immutable_shared_package.py verify-local
-          --jar build/libs/devpath-shared-0.0.1-et10.20260820.jar
+          --jar build/libs/devpath-shared-0.0.1-et11.20260822.jar
           --pom build/publications/maven/pom-default.xml
           --module build/publications/maven/module.json
       - name: Require the remote coordinate to be wholly absent or byte-exact

@@ -5,6 +5,7 @@
 /src/main/resources/** text eol=crlf
 /src/main/resources/db/migration/V202608161009__lcs_mentor_snapshot_contract.sql text eol=lf
 /src/main/resources/db/migration/V202608161011__validate_lcs_mentor_snapshot_contract.sql text eol=lf
+/src/main/resources/db/migration/V202608221001__correct_question_bank_accuracy.sql text eol=lf
 /.github/workflows/*.yml text eol=lf
 /scripts/release/*.py text eol=lf
 /tests/release/*.py text eol=lf

@@ -35,20 +35,20 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
     def test_frozen_coordinate_and_linux_publication_bytes(self) -> None:
         self.assertEqual("ai.devpath", PACKAGE.GROUP_ID)
         self.assertEqual("devpath-shared", PACKAGE.ARTIFACT_ID)
-        self.assertEqual("0.0.1-et10.20260820", PACKAGE.VERSION)
+        self.assertEqual("0.0.1-et11.20260822", PACKAGE.VERSION)
         self.assertEqual(
             {
-                "devpath-shared-0.0.1-et10.20260820.jar": (
-                    1_180_039,
-                    "0f74ac34ae08fdf6ffeb7903dc1a17775ddca7c0fa67171a2f217d71887bf544",
+                "devpath-shared-0.0.1-et11.20260822.jar": (
+                    1_229_365,
+                    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e",
                 ),
-                "devpath-shared-0.0.1-et10.20260820.pom": (
+                "devpath-shared-0.0.1-et11.20260822.pom": (
                     1_547,
-                    "66493604f82501a142bee1605594bdeecb897b1aba5cd5750734b28e9ce8e66a",
+                    "67786fc16d3a87c15cb5dfce32bce6973d2bab32b4f35c105fd81c3f37d188f0",
                 ),
-                "devpath-shared-0.0.1-et10.20260820.module": (
+                "devpath-shared-0.0.1-et11.20260822.module": (
                     2_893,
-                    "8f0b872acc0097e09a0a1043faa3693a2a84b5c1ec9cb6305cc897e04d4ad64b",
+                    "94f4af984231fe4b990091fd4575942a0626ef8aadae23e1cfe4f12a4b5d3acf",
                 ),
             },
             {name: (spec.size, spec.sha256) for name, spec in PACKAGE.ARTIFACTS.items()},
@@ -72,16 +72,16 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
             b"<modelVersion>4.0.0</modelVersion>"
             b"<groupId>ai.devpath</groupId>"
             b"<artifactId>devpath-shared</artifactId>"
-            b"<version>0.0.1-et10.20260820</version></project>\n"
+            b"<version>0.0.1-et11.20260822</version></project>\n"
         )
         module = (
             b'{"component":{"group":"ai.devpath","module":"devpath-shared",'
-            b'"version":"0.0.1-et10.20260820"},"variants":[]}\n'
+            b'"version":"0.0.1-et11.20260822"},"variants":[]}\n'
         )
         PACKAGE.validate_pom_semantics(pom)
         PACKAGE.validate_module_semantics(module)
         with self.assertRaises(PACKAGE.VerificationError):
-            PACKAGE.validate_pom_semantics(pom.replace(b"et10", b"et9"))
+            PACKAGE.validate_pom_semantics(pom.replace(b"et11", b"et9"))
         with self.assertRaises(PACKAGE.VerificationError):
             PACKAGE.validate_module_semantics(module.replace(b"devpath-shared", b"other"))
 
@@ -348,6 +348,12 @@ class WorkflowContractTest(unittest.TestCase):
             "repos/DevPathAi/devpath-gitops/branches/main/protection",
             self.migration,
         )
+        self.assertIn('test "$classic_status" = "200"', self.migration)
+        self.assertNotIn('test "$classic_status" = "404"', self.migration)
+        self.assertIn(
+            '--classic-protection "$auth_dir/classic-protection.json"',
+            self.migration,
+        )
         self.assertIn('GITHUB_API_VERSION: "2026-03-10"', self.migration)
         self.assertIn("validate-base-migration-job", self.migration)
         self.assertIn("set-migration-release", self.migration)
@@ -422,15 +428,15 @@ class MigrationReleaseGateTest(unittest.TestCase):
             "shared_migration": {
                 "repository": "DevPathAi/devpath-shared",
                 "source_sha": self.source_sha,
-                "shared_version": "0.0.1-et10.20260820",
+                "shared_version": "0.0.1-et11.20260822",
                 "shared_jar_sha256": (
-                    "0f74ac34ae08fdf6ffeb7903dc1a17775ddca7c0fa67171a2f217d71887bf544"
+                    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e"
                 ),
                 "image_repository": "ghcr.io/devpathai/devpath-migration",
                 "image_digest": "sha256:" + "a" * 64,
-                "flyway_target": "202608201002",
+                "flyway_target": "202608221001",
                 "required_migration": (
-                    "V202608201002__validate_community_content_soft_delete.sql"
+                    "V202608221001__correct_question_bank_accuracy.sql"
                 ),
                 "rollback_policy": "additive-retained",
             },
