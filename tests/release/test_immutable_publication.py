@@ -348,6 +348,12 @@ class WorkflowContractTest(unittest.TestCase):
             "repos/DevPathAi/devpath-gitops/branches/main/protection",
             self.migration,
         )
+        self.assertIn('test "$classic_status" = "200"', self.migration)
+        self.assertNotIn('test "$classic_status" = "404"', self.migration)
+        self.assertIn(
+            '--classic-protection "$auth_dir/classic-protection.json"',
+            self.migration,
+        )
         self.assertIn('GITHUB_API_VERSION: "2026-03-10"', self.migration)
         self.assertIn("validate-base-migration-job", self.migration)
         self.assertIn("set-migration-release", self.migration)
