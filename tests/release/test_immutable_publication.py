@@ -416,6 +416,19 @@ class WorkflowContractTest(unittest.TestCase):
         )
         self.assert_actions_are_sha_pinned(self.migration)
 
+    def test_migration_release_keeps_validator_control_sha_distinct_from_candidate_commit(
+        self,
+    ) -> None:
+        self.assertIn('test "$validator_head" = "$base_sha"', self.migration)
+        self.assertIn(
+            'test "$(git -C sealed-gitops rev-parse HEAD^^)" = "$base_sha"',
+            self.migration,
+        )
+        self.assertNotIn(
+            'test "$(git -C sealed-gitops rev-parse HEAD^)" = "$validator_head"',
+            self.migration,
+        )
+
 
 class MigrationReleaseGateTest(unittest.TestCase):
     def setUp(self) -> None:
