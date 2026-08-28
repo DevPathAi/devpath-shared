@@ -48,7 +48,7 @@ ET9 좌표 `ai.devpath:devpath-shared:0.0.1-et9.20260816`은 다음 세 Linux pu
 | `devpath-shared-0.0.1-et9.20260816.pom` | 1,546 | `10daef2cdf7d436f952fa6dab10a27253a933af013093bb6967dd220010dbdd7` |
 | `devpath-shared-0.0.1-et9.20260816.module` | 2,888 | `8c6445b67a674f8f65087728c5e602d9d3e06dd3c1a5bdbbe6d8f2d55779531c` |
 
-PR CI는 Temurin `21.0.12+8`과 Gradle `9.5.1`로 clean build한 세 파일을 byte-for-byte 검증합니다. `main`의 첫 시도에서만 publish workflow가 실행되며, 원격 좌표가 완전히 없으면 게시하고 이미 있으면 세 파일이 모두 exact match일 때만 성공합니다. 일부만 존재하거나 한 byte라도 다른 좌표는 덮어쓰지 않고 실패합니다. 게시 후에는 인증된 GitHub Packages 다운로드로 세 파일을 다시 확인합니다.
+PR CI는 Temurin `21.0.12+8.0.LTS`와 Gradle `9.5.1`로 clean build한 세 파일을 byte-for-byte 검증합니다. `main`의 첫 시도에서만 publish workflow가 실행되며, 원격 좌표가 완전히 없으면 게시하고 이미 있으면 세 파일이 모두 exact match일 때만 성공합니다. 일부만 존재하거나 한 byte라도 다른 좌표는 덮어쓰지 않고 실패합니다. 게시 후에는 인증된 GitHub Packages 다운로드로 세 파일을 다시 확인합니다.
 
 실제 publish 전 저장소 관리자는 `mission-spine-shared-package-publish` environment에 required reviewer를 설정하고 `prevent_self_review=true`를 확인해야 합니다. 환경이 없거나 보호 규칙이 다르면 workflow는 package write 전에 fail closed 합니다. workflow rerun(`run_attempt > 1`)은 금지하며, 재시도는 새 `main` commit으로 수행합니다.
 
