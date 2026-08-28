@@ -263,7 +263,8 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("postflight-remote", self.publish)
         self.assertIn("environment: mission-spine-shared-package-publish", self.publish)
         self.assertIn("prevent_self_review", self.publish)
-        self.assertIn("21.0.12+8", self.publish)
+        self.assertIn("21.0.12+8.0.LTS", self.publish)
+        self.assertNotIn("java-version: 21.0.12+8\n", self.publish)
         self.assertIn(
             "image: pgvector/pgvector:pg17@sha256:"
             "cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f",
@@ -281,7 +282,8 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("generatePomFileForMavenPublication", self.ci)
         self.assertIn("generateMetadataFileForMavenPublication", self.ci)
         self.assertIn("verify-local", self.ci)
-        self.assertIn("21.0.12+8", self.ci)
+        self.assertIn("21.0.12+8.0.LTS", self.ci)
+        self.assertNotIn("java-version: 21.0.12+8\n", self.ci)
         self.assertIn(
             "image: pgvector/pgvector:pg17@sha256:"
             "cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f",
