@@ -68,17 +68,18 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
 
     def test_main_promotion_is_bot_authored_and_cannot_mutate_protection(self) -> None:
         required_fragments = (
-            "permissions:\n      contents: write\n      pull-requests: write",
+            "permissions:\n      contents: read\n      pull-requests: write",
             "shared-main-20260829-automation",
             "4f245d61cc4924c9db0f3f3cbb90434ad0fe7d93",
             "8c3e16fc83d5f584a4384bbae9a8ae51a558b73a",
+            "e31d2eae33d35c3a938a67ee0c0a3f7dd6ad7c32",
             'EXPECTED_NONCE_SHA256: "9999999999999999999999999999999999999999999999999999999999999999"',
             'test "$GITHUB_RUN_ATTEMPT" = "1"',
-            'test "$(git rev-parse HEAD^1)" = "$EXPECTED_DEVELOP_SHA"',
+            'test "$(git rev-parse HEAD^1)" = "$EXPECTED_PRE_MERGE_DEVELOP_SHA"',
             'test "$(git rev-parse HEAD^2)" = "$EXPECTED_MAIN_SHA"',
+            'test "$(git show -s --format=%an HEAD)" = "github-actions[bot]"',
             'test "${changes[0]}" = "scripts/release/migration_release_gate.py"',
             'test "${changes[1]}" = "tests/release/test_migration_result_evidence.py"',
-            'git push origin HEAD:refs/heads/develop',
             'test "$(gh pr view "$pr_number" --json author --jq ',
             '"app/github-actions"',
         )
@@ -89,6 +90,7 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
             "administration: write",
             "/protection",
             "/rulesets",
+            "git push",
             "refs/heads/main",
         ):
             self.assertNotIn(forbidden, self.promotion)
