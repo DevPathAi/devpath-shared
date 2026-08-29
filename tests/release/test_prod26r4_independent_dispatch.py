@@ -72,6 +72,7 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
             "shared-main-20260829-automation",
             "4f245d61cc4924c9db0f3f3cbb90434ad0fe7d93",
             "8c3e16fc83d5f584a4384bbae9a8ae51a558b73a",
+            'EXPECTED_NONCE_SHA256: "9999999999999999999999999999999999999999999999999999999999999999"',
             'test "$GITHUB_RUN_ATTEMPT" = "1"',
             'test "$(git rev-parse HEAD^1)" = "$EXPECTED_DEVELOP_SHA"',
             'test "$(git rev-parse HEAD^2)" = "$EXPECTED_MAIN_SHA"',
