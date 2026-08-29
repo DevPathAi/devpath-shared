@@ -351,6 +351,59 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                 jobs_raw=canonical(jobs),
             )
 
+    def test_exact_github_actions_bot_is_allowed_only_as_initiator(self) -> None:
+        automation_env = copy.deepcopy(self.env)
+        automation_env["GITHUB_ACTOR"] = "github-actions[bot]"
+        automation_env["GITHUB_TRIGGERING_ACTOR"] = "github-actions[bot]"
+
+        approval = MIGRATION.validate_protected_approval(
+            env=automation_env,
+            environment_raw=canonical(self.environment),
+            approvals_raw=canonical(self.approvals),
+            jobs_raw=canonical(self.jobs),
+        )
+        self.assertEqual("independent-reviewer", approval["reviewer_login"])
+
+        for invalid_actor in (
+            "evil[bot]",
+            "github-actions[bot]suffix",
+            "[bot]",
+        ):
+            changed_env = copy.deepcopy(self.env)
+            changed_env["GITHUB_ACTOR"] = invalid_actor
+            changed_env["GITHUB_TRIGGERING_ACTOR"] = invalid_actor
+            with self.subTest(invalid_actor=invalid_actor), self.assertRaises(
+                MIGRATION.GateError
+            ):
+                MIGRATION.validate_protected_approval(
+                    env=changed_env,
+                    environment_raw=canonical(self.environment),
+                    approvals_raw=canonical(self.approvals),
+                    jobs_raw=canonical(self.jobs),
+                )
+
+        environment = copy.deepcopy(self.environment)
+        environment["protection_rules"][0]["reviewers"][0]["reviewer"][
+            "login"
+        ] = "github-actions[bot]"
+        with self.assertRaises(MIGRATION.GateError):
+            MIGRATION.validate_protected_approval(
+                env=automation_env,
+                environment_raw=canonical(environment),
+                approvals_raw=canonical(self.approvals),
+                jobs_raw=canonical(self.jobs),
+            )
+
+        approvals = copy.deepcopy(self.approvals)
+        approvals[0]["user"]["login"] = "github-actions[bot]"
+        with self.assertRaises(MIGRATION.GateError):
+            MIGRATION.validate_protected_approval(
+                env=automation_env,
+                environment_raw=canonical(self.environment),
+                approvals_raw=canonical(approvals),
+                jobs_raw=canonical(self.jobs),
+            )
+
     def test_gitops_app_scope_and_rulesets_are_exact(self) -> None:
         app = {"id": 4242, "slug": "devpath-gitops-release"}
         repositories = {

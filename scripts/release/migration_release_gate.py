@@ -59,6 +59,7 @@ DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_TAG = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 POSITIVE_INTEGER = re.compile(r"^[1-9][0-9]{0,19}$")
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
+AUTOMATION_INITIATOR_LOGINS = frozenset({"github-actions[bot]"})
 UTC_Z = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 PUBLISH_MODES = {"published", "reused"}
 MIGRATION_JOB_NAME = re.compile(
@@ -176,6 +177,12 @@ def _login(value: object, label: str) -> str:
     if not isinstance(value, str) or LOGIN.fullmatch(value) is None:
         raise GateError(f"{label} is not a canonical GitHub login")
     return value
+
+
+def _initiator_login(value: object, label: str) -> str:
+    if isinstance(value, str) and value in AUTOMATION_INITIATOR_LOGINS:
+        return value
+    return _login(value, label)
 
 
 def _utc_z_seconds(value: object, label: str) -> str:
@@ -685,8 +692,8 @@ def validate_protected_approval(
         if env.get(key) != expected:
             raise GateError(f"{key} must equal {expected}")
     _positive_integer_string(env.get("GITHUB_RUN_ID"), "GITHUB_RUN_ID")
-    actor = _login(env.get("GITHUB_ACTOR"), "GITHUB_ACTOR")
-    triggering_actor = _login(
+    actor = _initiator_login(env.get("GITHUB_ACTOR"), "GITHUB_ACTOR")
+    triggering_actor = _initiator_login(
         env.get("GITHUB_TRIGGERING_ACTOR"), "GITHUB_TRIGGERING_ACTOR"
     )
 
