@@ -10,13 +10,14 @@ import org.junit.jupiter.api.Test;
 class ReleaseCoordinateContractTest {
 
   @Test
-  void et11UsesOneUniqueImmutableMavenVersion() throws Exception {
+  void publicSupportUsesOneUniqueImmutableMavenVersion() throws Exception {
     String build = Files.readString(Path.of("build.gradle.kts"));
 
-    assertTrue(build.contains("version = \"0.0.1-et11.20260822\""));
+    assertTrue(build.contains("version = \"0.0.1-rh.20260905\""));
     assertFalse(build.contains("version = \"0.0.1-SNAPSHOT\""));
     assertFalse(build.contains("version = \"0.0.1-et9.20260816\""));
     assertFalse(build.contains("version = \"0.0.1-et10.20260820\""));
+    assertFalse(build.contains("version = \"0.0.1-et11.20260822\""));
     assertTrue(build.contains("immutableSharedRepository"));
   }
 }
