@@ -366,6 +366,7 @@ class WorkflowContractTest(unittest.TestCase):
         )
         self.assertIn('GITHUB_API_VERSION: "2026-03-10"', self.migration)
         self.assertIn("validate-base-migration-job", self.migration)
+        self.assertIn('--source-sha "$SOURCE_SHA"', self.migration)
         self.assertIn("set-migration-release", self.migration)
         self.assertNotIn('"$KUSTOMIZE_BIN" edit set image', self.migration)
         self.assertNotIn("! grep -F 'patches:'", self.migration)
