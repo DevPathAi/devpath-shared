@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed gate for the sealed ET9 migration GitOps update."""
+"""Fail-closed gate for the current sealed migration GitOps update."""
 
 from __future__ import annotations
 
@@ -44,13 +44,13 @@ MAX_EVIDENCE_BYTES = 16_384
 MAX_KUSTOMIZATION_BYTES = 65_536
 MAX_JOB_BYTES = 262_144
 MAX_RENDER_BYTES = 2_000_000
-SHARED_VERSION = "0.0.1-et11.20260822"
+SHARED_VERSION = "0.0.1-rm.20260905"
 SHARED_JAR_SHA256 = (
-    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e"
+    "991bef2e55b0e6fa3202e66e36e9b0c915037a629d8c51e82459e0e368325559"
 )
 IMAGE_REPOSITORY = "ghcr.io/devpathai/devpath-migration"
-FLYWAY_TARGET = "202608221001"
-REQUIRED_MIGRATION = "V202608221001__correct_question_bank_accuracy.sql"
+FLYWAY_TARGET = "202609051004"
+REQUIRED_MIGRATION = "V202609051004__mentor_invite_batches.sql"
 ROLLBACK_POLICY = "additive-retained"
 RELEASE_ID = re.compile(r"^ms-[0-9]{8}-[a-z0-9][a-z0-9-]{2,40}$")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed verifier for the one-shot ET9 Shared Maven publication."""
+"""Fail-closed verifier for the current one-shot Shared Maven publication."""
 
 from __future__ import annotations
 
@@ -22,11 +22,11 @@ import xml.etree.ElementTree as ET
 
 GROUP_ID = "ai.devpath"
 ARTIFACT_ID = "devpath-shared"
-VERSION = "0.0.1-et11.20260822"
+VERSION = "0.0.1-rm.20260905"
 REPOSITORY = "DevPathAi/devpath-shared"
 MAVEN_BASE_URL = (
     "https://maven.pkg.github.com/DevPathAi/devpath-shared/"
-    "ai/devpath/devpath-shared/0.0.1-et11.20260822"
+    "ai/devpath/devpath-shared/0.0.1-rm.20260905"
 )
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 
@@ -44,18 +44,18 @@ class ArtifactSpec(NamedTuple):
 ARTIFACTS = {
     f"{ARTIFACT_ID}-{VERSION}.jar": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.jar",
-        1_229_365,
-        "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e",
+        1_238_684,
+        "991bef2e55b0e6fa3202e66e36e9b0c915037a629d8c51e82459e0e368325559",
     ),
     f"{ARTIFACT_ID}-{VERSION}.pom": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.pom",
-        1_547,
-        "67786fc16d3a87c15cb5dfce32bce6973d2bab32b4f35c105fd81c3f37d188f0",
+        1_545,
+        "d8879823f743e471e710a5636ed0ca4b33e724781a8ca4b824b6d235f7e5edb2",
     ),
     f"{ARTIFACT_ID}-{VERSION}.module": ArtifactSpec(
         f"{ARTIFACT_ID}-{VERSION}.module",
-        2_893,
-        "94f4af984231fe4b990091fd4575942a0626ef8aadae23e1cfe4f12a4b5d3acf",
+        2_883,
+        "7857ea12850266a6b0f730847c14373c498c46b3001338f7b3ab8d385be7edb2",
     ),
 }
 
