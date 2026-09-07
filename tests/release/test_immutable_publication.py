@@ -35,20 +35,20 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
     def test_frozen_coordinate_and_linux_publication_bytes(self) -> None:
         self.assertEqual("ai.devpath", PACKAGE.GROUP_ID)
         self.assertEqual("devpath-shared", PACKAGE.ARTIFACT_ID)
-        self.assertEqual("0.0.1-rm.20260905", PACKAGE.VERSION)
+        self.assertEqual("0.0.1-rm.20260907", PACKAGE.VERSION)
         self.assertEqual(
             {
-                "devpath-shared-0.0.1-rm.20260905.jar": (
-                    1_238_684,
-                    "991bef2e55b0e6fa3202e66e36e9b0c915037a629d8c51e82459e0e368325559",
+                "devpath-shared-0.0.1-rm.20260907.jar": (
+                    1_239_001,
+                    "3a64de1a1773f1aa05ccd801a88f01ef2cead887e44930554074230fd01f2996",
                 ),
-                "devpath-shared-0.0.1-rm.20260905.pom": (
+                "devpath-shared-0.0.1-rm.20260907.pom": (
                     1_545,
-                    "d8879823f743e471e710a5636ed0ca4b33e724781a8ca4b824b6d235f7e5edb2",
+                    "3d2dbf7bc1dd2ef98d327d941ac4c23b419e22fb8d69857d4f7a02f556b3ba50",
                 ),
-                "devpath-shared-0.0.1-rm.20260905.module": (
+                "devpath-shared-0.0.1-rm.20260907.module": (
                     2_883,
-                    "7857ea12850266a6b0f730847c14373c498c46b3001338f7b3ab8d385be7edb2",
+                    "a6b05c5408dfbd55ee7edcd3ce9492142e3d15c9d6f904b178d64d088e0a6964",
                 ),
             },
             {name: (spec.size, spec.sha256) for name, spec in PACKAGE.ARTIFACTS.items()},
@@ -72,11 +72,11 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
             b"<modelVersion>4.0.0</modelVersion>"
             b"<groupId>ai.devpath</groupId>"
             b"<artifactId>devpath-shared</artifactId>"
-            b"<version>0.0.1-rm.20260905</version></project>\n"
+            b"<version>0.0.1-rm.20260907</version></project>\n"
         )
         module = (
             b'{"component":{"group":"ai.devpath","module":"devpath-shared",'
-            b'"version":"0.0.1-rm.20260905"},"variants":[]}\n'
+            b'"version":"0.0.1-rm.20260907"},"variants":[]}\n'
         )
         PACKAGE.validate_pom_semantics(pom)
         PACKAGE.validate_module_semantics(module)
@@ -262,7 +262,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("steps.package-state.outputs.publish_needed == 'true'", self.publish)
         self.assertIn("postflight-remote", self.publish)
         self.assertIn(
-            "build/libs/devpath-shared-0.0.1-rm.20260905.jar",
+            "build/libs/devpath-shared-0.0.1-rm.20260907.jar",
             self.publish,
         )
         self.assertIn("environment: mission-spine-shared-package-publish", self.publish)
@@ -287,7 +287,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("generateMetadataFileForMavenPublication", self.ci)
         self.assertIn("verify-local", self.ci)
         self.assertIn(
-            "build/libs/devpath-shared-0.0.1-rm.20260905.jar",
+            "build/libs/devpath-shared-0.0.1-rm.20260907.jar",
             self.ci,
         )
         self.assertIn("21.0.12+8.0.LTS", self.ci)
@@ -452,9 +452,9 @@ class MigrationReleaseGateTest(unittest.TestCase):
             "shared_migration": {
                 "repository": "DevPathAi/devpath-shared",
                 "source_sha": self.source_sha,
-                "shared_version": "0.0.1-rm.20260905",
+                "shared_version": "0.0.1-rm.20260907",
                 "shared_jar_sha256": (
-                    "991bef2e55b0e6fa3202e66e36e9b0c915037a629d8c51e82459e0e368325559"
+                    "3a64de1a1773f1aa05ccd801a88f01ef2cead887e44930554074230fd01f2996"
                 ),
                 "image_repository": "ghcr.io/devpathai/devpath-migration",
                 "image_digest": "sha256:" + "a" * 64,

@@ -3,10 +3,16 @@
 DO $migration$
 DECLARE
   target_schema TEXT := current_schema();
+  has_users BOOLEAN := to_regclass(format('%I.users', current_schema())) IS NOT NULL;
+  has_mentor_access BOOLEAN :=
+    to_regclass(format('%I.mentor_access', current_schema())) IS NOT NULL;
 BEGIN
-  IF to_regclass(format('%I.users', target_schema)) IS NULL
-      OR to_regclass(format('%I.mentor_access', target_schema)) IS NULL THEN
+  IF NOT has_users AND NOT has_mentor_access THEN
     RETURN;
+  ELSIF NOT has_users OR NOT has_mentor_access THEN
+    RAISE EXCEPTION
+      'asymmetric mentor invite code prerequisites in schema % (users: %, mentor_access: %)',
+      target_schema, has_users, has_mentor_access;
   END IF;
 
   EXECUTE format(

@@ -13,7 +13,7 @@ class ReleaseCoordinateContractTest {
   void mentorAccessUsesOneUniqueImmutableMavenVersion() throws Exception {
     String build = Files.readString(Path.of("build.gradle.kts"));
 
-    assertTrue(build.contains("version = \"0.0.1-rm.20260905\""));
+    assertTrue(build.contains("version = \"0.0.1-rm.20260907\""));
     assertFalse(build.contains("version = \"0.0.1-SNAPSHOT\""));
     assertFalse(build.contains("version = \"0.0.1-et9.20260816\""));
     assertFalse(build.contains("version = \"0.0.1-et10.20260820\""));

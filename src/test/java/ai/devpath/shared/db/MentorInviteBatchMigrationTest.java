@@ -2,12 +2,14 @@ package ai.devpath.shared.db;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
 
@@ -42,6 +44,22 @@ class MentorInviteBatchMigrationTest {
     }
   }
 
+  @Test
+  void failsWithoutRecordingMigrationWhenMentorAccessIsMissing() throws Exception {
+    String schema = "mentor_batch_" + UUID.randomUUID().toString().replace("-", "");
+    try {
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        st.execute("CREATE SCHEMA " + schema);
+        st.execute("CREATE TABLE " + schema + ".users (id BIGINT PRIMARY KEY)");
+      }
+
+      assertThrows(FlywayException.class, () -> migrate(schema));
+      assertMigrationNotRecorded(schema, "202609051004");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
   private static void migrate(String schema) {
     Flyway.configure()
         .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
@@ -66,6 +84,15 @@ class MentorInviteBatchMigrationTest {
           + ".users(id),status VARCHAR(16) NOT NULL,source VARCHAR(16) NOT NULL,"
           + "waitlisted_at TIMESTAMPTZ NOT NULL,activated_at TIMESTAMPTZ,"
           + "batch_id BIGINT,invite_code_id BIGINT,version BIGINT NOT NULL DEFAULT 0)");
+    }
+  }
+
+  private static void assertMigrationNotRecorded(String schema, String version) throws Exception {
+    try (var c = dataSource().getConnection(); var st = c.createStatement();
+         var rs = st.executeQuery("SELECT count(*) FROM " + schema
+             + ".flyway_schema_history WHERE version='" + version + "' AND success")) {
+      assertTrue(rs.next());
+      assertEquals(0, rs.getInt(1));
     }
   }
 

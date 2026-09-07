@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
 
@@ -22,17 +23,7 @@ class MentorAccessMigrationTest {
     try {
       createPriorTables(schema);
 
-      Flyway.configure()
-          .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
-          .dataSource(dataSource())
-          .locations("classpath:db/migration")
-          .schemas(schema)
-          .defaultSchema(schema)
-          .baselineOnMigrate(true)
-          .baselineVersion(PRIOR_VERSION)
-          .placeholderReplacement(false)
-          .load()
-          .migrate();
+      migrate(schema);
 
       try (var c = dataSource().getConnection(); var st = c.createStatement()) {
         try (var rs = st.executeQuery("SELECT user_id,status,source,activated_at "
@@ -60,18 +51,59 @@ class MentorAccessMigrationTest {
     }
   }
 
+  @Test
+  void failsWithoutRecordingMigrationWhenOnlyOnePrerequisiteExists() throws Exception {
+    String schema = "mentor_access_" + UUID.randomUUID().toString().replace("-", "");
+    try {
+      try (var c = dataSource().getConnection(); var st = c.createStatement()) {
+        st.execute("CREATE SCHEMA " + schema);
+        st.execute("CREATE TABLE " + schema + ".users (id BIGINT PRIMARY KEY)");
+      }
+
+      assertThrows(FlywayException.class, () -> migrate(schema));
+      assertMigrationNotRecorded(schema, "202609051002");
+    } finally {
+      dropSchema(schema);
+    }
+  }
+
   private static void createPriorTables(String schema) throws Exception {
     try (var c = dataSource().getConnection(); var st = c.createStatement()) {
       st.execute("CREATE SCHEMA " + schema);
       st.execute("CREATE TABLE " + schema + ".users ("
-          + "id BIGINT PRIMARY KEY, email VARCHAR(255), status VARCHAR(20) NOT NULL)");
+          + "id BIGINT PRIMARY KEY, email VARCHAR(255), status VARCHAR(20) NOT NULL,"
+          + "deleted_at TIMESTAMPTZ)");
       st.execute("CREATE TABLE " + schema + ".beta_allowlist ("
           + "id BIGSERIAL PRIMARY KEY, email VARCHAR(320) NOT NULL UNIQUE)");
       st.execute("INSERT INTO " + schema + ".users VALUES"
-          + "(1,'Approved@Example.com','ACTIVE'),(2,'waiting@example.com','ACTIVE'),"
-          + "(3,'inactive@example.com','DELETED')");
+          + "(1,'Approved@Example.com','ACTIVE',NULL),"
+          + "(2,'waiting@example.com','ACTIVE',NULL),"
+          + "(3,'inactive@example.com','ACTIVE',now())");
       st.execute("INSERT INTO " + schema
           + ".beta_allowlist(email) VALUES('approved@example.com'),('inactive@example.com')");
+    }
+  }
+
+  private static void migrate(String schema) {
+    Flyway.configure()
+        .configuration(Map.of("flyway.postgresql.transactional.lock", "false"))
+        .dataSource(dataSource())
+        .locations("classpath:db/migration")
+        .schemas(schema)
+        .defaultSchema(schema)
+        .baselineOnMigrate(true)
+        .baselineVersion(PRIOR_VERSION)
+        .placeholderReplacement(false)
+        .load()
+        .migrate();
+  }
+
+  private static void assertMigrationNotRecorded(String schema, String version) throws Exception {
+    try (var c = dataSource().getConnection(); var st = c.createStatement();
+         var rs = st.executeQuery("SELECT count(*) FROM " + schema
+             + ".flyway_schema_history WHERE version='" + version + "' AND success")) {
+      assertTrue(rs.next());
+      assertEquals(0, rs.getInt(1));
     }
   }
 

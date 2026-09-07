@@ -40,13 +40,13 @@ docker compose up -d
 
 ### RM immutable package release
 
-RM 좌표 `ai.devpath:devpath-shared:0.0.1-rm.20260905`는 다음 세 Linux publication byte를 고정합니다.
+RM 좌표 `ai.devpath:devpath-shared:0.0.1-rm.20260907`는 다음 세 Linux publication byte를 고정합니다.
 
 | 파일 | bytes | SHA-256 |
 |------|------:|---------|
-| `devpath-shared-0.0.1-rm.20260905.jar` | 1,238,684 | `991bef2e55b0e6fa3202e66e36e9b0c915037a629d8c51e82459e0e368325559` |
-| `devpath-shared-0.0.1-rm.20260905.pom` | 1,545 | `d8879823f743e471e710a5636ed0ca4b33e724781a8ca4b824b6d235f7e5edb2` |
-| `devpath-shared-0.0.1-rm.20260905.module` | 2,883 | `7857ea12850266a6b0f730847c14373c498c46b3001338f7b3ab8d385be7edb2` |
+| `devpath-shared-0.0.1-rm.20260907.jar` | 1,239,001 | `3a64de1a1773f1aa05ccd801a88f01ef2cead887e44930554074230fd01f2996` |
+| `devpath-shared-0.0.1-rm.20260907.pom` | 1,545 | `3d2dbf7bc1dd2ef98d327d941ac4c23b419e22fb8d69857d4f7a02f556b3ba50` |
+| `devpath-shared-0.0.1-rm.20260907.module` | 2,883 | `a6b05c5408dfbd55ee7edcd3ce9492142e3d15c9d6f904b178d64d088e0a6964` |
 
 PR CI는 Temurin `21.0.12+8.0.LTS`와 Gradle `9.5.1`로 clean build한 세 파일을 byte-for-byte 검증합니다. `main`의 첫 시도에서만 publish workflow가 실행되며, 원격 좌표가 완전히 없으면 게시하고 이미 있으면 세 파일이 모두 exact match일 때만 성공합니다. 일부만 존재하거나 한 byte라도 다른 좌표는 덮어쓰지 않고 실패합니다. 게시 후에는 인증된 GitHub Packages 다운로드로 세 파일을 다시 확인합니다.
 

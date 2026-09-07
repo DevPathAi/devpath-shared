@@ -3,10 +3,15 @@
 DO $migration$
 DECLARE
   target_schema TEXT := current_schema();
+  has_users BOOLEAN := to_regclass(format('%I.users', current_schema())) IS NOT NULL;
+  has_allowlist BOOLEAN := to_regclass(format('%I.beta_allowlist', current_schema())) IS NOT NULL;
 BEGIN
-  IF to_regclass(format('%I.users', target_schema)) IS NULL
-      OR to_regclass(format('%I.beta_allowlist', target_schema)) IS NULL THEN
+  IF NOT has_users AND NOT has_allowlist THEN
     RETURN;
+  ELSIF NOT has_users OR NOT has_allowlist THEN
+    RAISE EXCEPTION
+      'asymmetric mentor access prerequisites in schema % (users: %, beta_allowlist: %)',
+      target_schema, has_users, has_allowlist;
   END IF;
 
   EXECUTE format(
@@ -37,7 +42,7 @@ BEGIN
     'INSERT INTO %I.mentor_access(user_id,status,source,waitlisted_at,activated_at) '
       || 'SELECT u.id,''ACTIVE'',''ADMIN'',now(),now() '
       || 'FROM %I.users u JOIN %I.beta_allowlist b ON lower(b.email)=lower(u.email) '
-      || 'WHERE u.status=''ACTIVE'' '
+      || 'WHERE u.status=''ACTIVE'' AND u.deleted_at IS NULL '
       || 'ON CONFLICT (user_id) DO NOTHING',
     target_schema, target_schema, target_schema);
 END
