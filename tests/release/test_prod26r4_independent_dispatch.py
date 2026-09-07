@@ -25,7 +25,12 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
             "      github.ref == 'refs/heads/chore/prod26r4-independent-dispatch'",
             self.workflow,
         )
-        self.assertIn("  promote-main:\n    if: >-", self.workflow)
+        self.assertIn(
+            "  promote-main:\n"
+            "    if: >-\n"
+            "      github.ref == 'refs/heads/chore/shared-promotion-bot-20260907'",
+            self.workflow,
+        )
 
     def test_dispatcher_has_only_required_repository_permissions(self) -> None:
         self.assertIn("permissions:\n  actions: write\n  contents: read", self.workflow)
@@ -69,17 +74,22 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
     def test_main_promotion_is_bot_authored_and_cannot_mutate_protection(self) -> None:
         required_fragments = (
             "permissions:\n      contents: read\n      pull-requests: write",
-            "shared-main-20260829-automation",
-            "4f245d61cc4924c9db0f3f3cbb90434ad0fe7d93",
-            "8c3e16fc83d5f584a4384bbae9a8ae51a558b73a",
-            "e31d2eae33d35c3a938a67ee0c0a3f7dd6ad7c32",
-            'EXPECTED_NONCE_SHA256: "9999999999999999999999999999999999999999999999999999999999999999"',
+            "shared-main-20260907-mentor-access",
+            "b6b8c6ba79818af4d338f2875352ecd07f455068",
+            "ca9aaa72d0a039d77afa7bdf64bb7221c10dd46f",
+            "d25fc0f49d8d72e491805ed0308bacad9ca2c26a",
+            "efb73a6b5aab7c78d7580bfe97d7f0c35abfc417",
+            "4beab8926e6905dff6d5f7052f6052cd8ebbc731948db4510b87e227caff9a0e",
+            'EXPECTED_NONCE_SHA256: "ff846ded5f1e98b49b09d434aadc7240337aa542f1f8242916dd93dc13dc915d"',
             'test "$GITHUB_RUN_ATTEMPT" = "1"',
-            'test "$(git rev-parse HEAD^1)" = "$EXPECTED_PRE_MERGE_DEVELOP_SHA"',
+            'test "$(git rev-parse HEAD^1)" = "$EXPECTED_CONTENT_SHA"',
             'test "$(git rev-parse HEAD^2)" = "$EXPECTED_MAIN_SHA"',
-            'test "$(git show -s --format=%an HEAD)" = "github-actions[bot]"',
-            'test "${changes[0]}" = "scripts/release/migration_release_gate.py"',
-            'test "${changes[1]}" = "tests/release/test_migration_result_evidence.py"',
+            'test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE_SHA"',
+            'test "$diff_sha256" = "$EXPECTED_DIFF_SHA256"',
+            'test "$(git show -s --format=%an HEAD)" = "Velkaressia"',
+            'test "$(git show -s --format=%cn HEAD)" = "GitHub"',
+            '--title "chore(release): promote mentor access contracts"',
+            "Automation-authored Shared main promotion after validated PR #83.",
             'test "$(gh pr view "$pr_number" --json author --jq ',
             '"app/github-actions"',
         )
