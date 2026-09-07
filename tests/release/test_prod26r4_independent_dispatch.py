@@ -11,7 +11,12 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         jobs = cls.workflow.split("  dispatch:\n", 1)[1]
-        cls.dispatch, cls.promotion = jobs.split("  promote-main:\n", 1)
+        cls.dispatch, promotion_and_rest = jobs.split("  promote-main:\n", 1)
+        cls.promotion, separator, cls.seal = promotion_and_rest.partition(
+            "  seal-develop:\n"
+        )
+        if separator:
+            cls.seal = "  seal-develop:\n" + cls.seal
 
     def test_workflow_preserves_main_deploy_and_isolates_branch_dispatcher(self) -> None:
         self.assertIn("name: Mission Spine - sealed migration GitOps release", self.workflow)
@@ -104,6 +109,37 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
             "refs/heads/main",
         ):
             self.assertNotIn(forbidden, self.promotion)
+
+    def test_develop_seal_is_exact_bot_push_without_main_mutation(self) -> None:
+        required_fragments = (
+            "  seal-develop:\n",
+            "github.ref == 'refs/heads/chore/shared-promotion-bot-20260907'",
+            "shared-main-seal-20260907-mentor-access",
+            "permissions:\n      contents: write\n      pull-requests: read",
+            "b6b8c6ba79818af4d338f2875352ecd07f455068",
+            "d25fc0f49d8d72e491805ed0308bacad9ca2c26a",
+            "efb73a6b5aab7c78d7580bfe97d7f0c35abfc417",
+            "e805e9580381c79d56497b844f428f4b5912977a",
+            'EXPECTED_NONCE_SHA256: "1b8438927b4a01205434ca3b5a2272f9c8e73812bbb65d2f906492edb03edebb"',
+            'test "$GITHUB_RUN_ATTEMPT" = "1"',
+            'test "$(git rev-parse HEAD)" = "$EXPECTED_DEVELOP_SHA"',
+            'GIT_AUTHOR_NAME="github-actions[bot]"',
+            'GIT_AUTHOR_DATE="2026-09-07T10:57:00Z"',
+            'git commit-tree "$EXPECTED_TREE_SHA" -p "$EXPECTED_DEVELOP_SHA"',
+            'test "$sealed_sha" = "$EXPECTED_SEALED_SHA"',
+            'git push origin "$sealed_sha:refs/heads/develop"',
+            'test "$server_develop" = "$EXPECTED_SEALED_SHA"',
+            'test "$pr_author" = "app/github-actions"',
+        )
+        for fragment in required_fragments:
+            self.assertIn(fragment, self.seal)
+        for forbidden in (
+            "--force",
+            "administration: write",
+            "pull-requests: write",
+            "refs/heads/main",
+        ):
+            self.assertNotIn(forbidden, self.seal)
 
 
 if __name__ == "__main__":

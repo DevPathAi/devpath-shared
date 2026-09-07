@@ -755,3 +755,107 @@ jobs:
             echo "- pull request: $pr_url"
             echo "- author: app/github-actions"
           } >>"$GITHUB_STEP_SUMMARY"
+
+  seal-develop:
+    if: >-
+      github.ref == 'refs/heads/chore/shared-promotion-bot-20260907'
+      && inputs.release_id == 'shared-main-seal-20260907-mentor-access'
+    name: seal-develop
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      SEAL_ID: shared-main-seal-20260907-mentor-access
+      EXPECTED_MAIN_SHA: b6b8c6ba79818af4d338f2875352ecd07f455068
+      EXPECTED_DEVELOP_SHA: d25fc0f49d8d72e491805ed0308bacad9ca2c26a
+      EXPECTED_TREE_SHA: efb73a6b5aab7c78d7580bfe97d7f0c35abfc417
+      EXPECTED_SEALED_SHA: e805e9580381c79d56497b844f428f4b5912977a
+      EXPECTED_NONCE_SHA256: "1b8438927b4a01205434ca3b5a2272f9c8e73812bbb65d2f906492edb03edebb"
+      INPUT_SEAL_ID: ${{ inputs.release_id }}
+      INPUT_MAIN_SHA: ${{ inputs.source_sha }}
+      INPUT_DEVELOP_SHA: ${{ inputs.sealed_release_sha }}
+      INPUT_MAIN_SENTINEL: ${{ inputs.gitops_source_sha }}
+      INPUT_NONCE_SHA256: ${{ inputs.release_manifest_sha256 }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_API_VERSION: "2026-03-10"
+    steps:
+      - name: Prove the exact bot seal context
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = "VelkaressiaBlutkrone"
+          test "$GITHUB_TRIGGERING_ACTOR" = "VelkaressiaBlutkrone"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$GITHUB_REF" = "refs/heads/chore/shared-promotion-bot-20260907"
+          test "$INPUT_SEAL_ID" = "$SEAL_ID"
+          test "$INPUT_MAIN_SHA" = "$EXPECTED_MAIN_SHA"
+          test "$INPUT_DEVELOP_SHA" = "$EXPECTED_DEVELOP_SHA"
+          test "$INPUT_MAIN_SENTINEL" = "$EXPECTED_MAIN_SHA"
+          test "$INPUT_NONCE_SHA256" = "$EXPECTED_NONCE_SHA256"
+
+      - name: Checkout the exact develop head with scoped push credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          ref: develop
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Create and push the exact tree-preserving bot seal
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          current_main="$(git rev-parse refs/remotes/origin/main)"
+          current_develop="$(
+            gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/branches/develop" --jq '.commit.sha'
+          )"
+          test "$current_main" = "$EXPECTED_MAIN_SHA"
+          test "$current_develop" = "$EXPECTED_DEVELOP_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_DEVELOP_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+          pr_author="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.user.login')"
+          pr_base="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.base.ref')"
+          pr_head="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.ref')"
+          pr_head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.sha')"
+          test "$pr_author" = "app/github-actions"
+          test "$pr_base" = "main"
+          test "$pr_head" = "develop"
+          test "$pr_head_sha" = "$EXPECTED_DEVELOP_SHA"
+
+          export GIT_AUTHOR_NAME="github-actions[bot]"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_AUTHOR_DATE="2026-09-07T10:57:00Z"
+          export GIT_COMMITTER_NAME="github-actions[bot]"
+          export GIT_COMMITTER_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_DATE="2026-09-07T10:57:00Z"
+          sealed_sha="$(
+            git commit-tree "$EXPECTED_TREE_SHA" -p "$EXPECTED_DEVELOP_SHA" \
+              -m "chore(release): seal mentor access promotion"
+          )"
+          test "$sealed_sha" = "$EXPECTED_SEALED_SHA"
+          test "$(git rev-parse "$sealed_sha^{tree}")" = "$EXPECTED_TREE_SHA"
+          test "$(git rev-parse "$sealed_sha^")" = "$EXPECTED_DEVELOP_SHA"
+          test "$(git show -s --format=%an "$sealed_sha")" = "github-actions[bot]"
+          test "$(git show -s --format=%cn "$sealed_sha")" = "github-actions[bot]"
+          git diff --quiet "$EXPECTED_DEVELOP_SHA" "$sealed_sha"
+          git diff --check "$EXPECTED_DEVELOP_SHA" "$sealed_sha"
+
+          git push origin "$sealed_sha:refs/heads/develop"
+
+          server_develop="$(
+            gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/branches/develop" --jq '.commit.sha'
+          )"
+          test "$server_develop" = "$EXPECTED_SEALED_SHA"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.sha')" = "$EXPECTED_SEALED_SHA"
+
+          {
+            echo "### Tree-preserving bot seal"
+            echo "- previous develop SHA: $EXPECTED_DEVELOP_SHA"
+            echo "- sealed develop SHA: $EXPECTED_SEALED_SHA"
+            echo "- tree SHA: $EXPECTED_TREE_SHA"
+            echo "- pull request: https://github.com/$GITHUB_REPOSITORY/pull/85"
+          } >>"$GITHUB_STEP_SUMMARY"
