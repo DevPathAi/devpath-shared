@@ -864,9 +864,34 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             "  # unsuspend a digest-derived Job after selecting its digest.\n"
             "  suspend: true\n"
             "  backoffLimit: 3\n"
-            "  template: {}\n"
+            "  template:\n"
+            "    spec:\n"
+            "      initContainers:\n"
+            "        - name: preflight\n"
+            "          env:\n"
+            "            - name: EXPECTED_SHARED_COMMIT\n"
+            f'              value: "{self.source_sha}"\n'
+            "            - name: TARGET_FLYWAY_VERSION\n"
+            '              value: "202609051004"\n'
+            "      containers:\n"
+            "        - name: flyway\n"
+            "          env:\n"
+            "            - name: EXPECTED_SHARED_COMMIT\n"
+            f'              value: "{self.source_sha}"\n'
+            "            - name: TARGET_FLYWAY_VERSION\n"
+            '              value: "202609051004"\n'
+            "          args:\n"
+            "            - |\n"
+            f'              test "$EXPECTED_SHARED_COMMIT" = "{self.source_sha}"\n'
+            '              test "$TARGET_FLYWAY_VERSION" = "202609051004"\n'
+            "              test -f /flyway/sql/V202609051001__public_support_requests.sql\n"
+            "              test -f /flyway/sql/V202609051002__mentor_access.sql\n"
+            "              test -f /flyway/sql/V202609051003__mentor_invite_codes.sql\n"
+            "              test -f /flyway/sql/V202609051004__mentor_invite_batches.sql\n"
+            '              flyway -locations="$migration_locations" -target="$TARGET_FLYWAY_VERSION" migrate\n'
+            '              flyway -locations="$migration_locations" -target="$TARGET_FLYWAY_VERSION" validate\n'
         ).encode()
-        MIGRATION.validate_base_migration_job(canonical_job)
+        MIGRATION.validate_base_migration_job(canonical_job, self.source_sha)
 
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "kustomization.yaml"
@@ -955,11 +980,29 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             ),
             canonical_job.replace(b"  backoffLimit: 3\n", b""),
             canonical_job + b"# Force=true,Replace=true\n",
+            canonical_job.replace(self.source_sha.encode(), b"2" * 40),
+            canonical_job.replace(b"202609051004", b"202608201002"),
+            canonical_job.replace(
+                b"              test -f /flyway/sql/V202609051001__public_support_requests.sql\n",
+                b"",
+            ),
+            canonical_job.replace(
+                b"              test -f /flyway/sql/V202609051002__mentor_access.sql\n",
+                b"",
+            ),
+            canonical_job.replace(
+                b"              test -f /flyway/sql/V202609051003__mentor_invite_codes.sql\n",
+                b"",
+            ),
+            canonical_job.replace(
+                b"              test -f /flyway/sql/V202609051004__mentor_invite_batches.sql\n",
+                b"",
+            ),
         ):
             with self.subTest(changed_job=changed_job[-80:]), self.assertRaises(
                 MIGRATION.GateError
             ):
-                MIGRATION.validate_base_migration_job(changed_job)
+                MIGRATION.validate_base_migration_job(changed_job, self.source_sha)
         with self.assertRaises(MIGRATION.GateError):
             MIGRATION.validate_migration_render(
                 render.replace(derived_name.encode(), b"devpath-flyway-migrate-latest"),

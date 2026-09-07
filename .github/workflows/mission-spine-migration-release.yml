@@ -340,7 +340,8 @@ jobs:
           test -f "$job"
           test ! -L "$job"
           python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
-            validate-base-migration-job --job "$job"
+            validate-base-migration-job --job "$job" \
+            --source-sha "$SOURCE_SHA"
           python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
             set-migration-release \
             --kustomization "$kustomization" \

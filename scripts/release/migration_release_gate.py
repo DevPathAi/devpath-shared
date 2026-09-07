@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed gate for the sealed ET9 migration GitOps update."""
+"""Fail-closed gate for the current sealed migration GitOps update."""
 
 from __future__ import annotations
 
@@ -44,13 +44,19 @@ MAX_EVIDENCE_BYTES = 16_384
 MAX_KUSTOMIZATION_BYTES = 65_536
 MAX_JOB_BYTES = 262_144
 MAX_RENDER_BYTES = 2_000_000
-SHARED_VERSION = "0.0.1-et11.20260822"
+SHARED_VERSION = "0.0.1-rm.20260907"
 SHARED_JAR_SHA256 = (
-    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e"
+    "3a64de1a1773f1aa05ccd801a88f01ef2cead887e44930554074230fd01f2996"
 )
 IMAGE_REPOSITORY = "ghcr.io/devpathai/devpath-migration"
-FLYWAY_TARGET = "202608221001"
-REQUIRED_MIGRATION = "V202608221001__correct_question_bank_accuracy.sql"
+FLYWAY_TARGET = "202609051004"
+REQUIRED_MIGRATION = "V202609051004__mentor_invite_batches.sql"
+REQUIRED_MIGRATIONS = (
+    "V202609051001__public_support_requests.sql",
+    "V202609051002__mentor_access.sql",
+    "V202609051003__mentor_invite_codes.sql",
+    REQUIRED_MIGRATION,
+)
 ROLLBACK_POLICY = "additive-retained"
 RELEASE_ID = re.compile(r"^ms-[0-9]{8}-[a-z0-9][a-z0-9-]{2,40}$")
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -590,8 +596,13 @@ def validate_migration_kustomization(
         )
 
 
-def validate_base_migration_job(job_raw: bytes) -> None:
+def validate_base_migration_job(
+    job_raw: bytes, expected_shared_commit: str
+) -> None:
     text = _validate_lf_text(job_raw, "base migration Job", MAX_JOB_BYTES)
+    source_sha = _nonzero(
+        SHA40, expected_shared_commit, "expected shared commit"
+    )
     if (
         text.count("suspend:") != 1
         or len(re.findall(r"(?m)^spec:$", text)) != 1
@@ -606,6 +617,41 @@ def validate_base_migration_job(job_raw: bytes) -> None:
         or "Replace=true" in text
     ):
         raise GateError("sealed base migration Job is not canonically inert")
+
+    commit_env = re.findall(
+        r'(?m)^\s*- name: EXPECTED_SHARED_COMMIT\n\s+value: "([0-9a-f]{40})"$',
+        text,
+    )
+    target_env = re.findall(
+        r'(?m)^\s*- name: TARGET_FLYWAY_VERSION\n\s+value: "([0-9]{12})"$',
+        text,
+    )
+    if commit_env != [source_sha, source_sha] or text.count(
+        f'test "$EXPECTED_SHARED_COMMIT" = "{source_sha}"'
+    ) != 1:
+        raise GateError(
+            "base migration Job does not bind the exact shared source commit"
+        )
+    if target_env != [FLYWAY_TARGET, FLYWAY_TARGET] or text.count(
+        f'test "$TARGET_FLYWAY_VERSION" = "{FLYWAY_TARGET}"'
+    ) != 1:
+        raise GateError(
+            "base migration Job does not bind the exact Flyway target"
+        )
+    for migration in REQUIRED_MIGRATIONS:
+        if text.count(f"test -f /flyway/sql/{migration}") != 1:
+            raise GateError(
+                f"base migration Job does not require {migration}"
+            )
+    for command in ("migrate", "validate"):
+        expected = (
+            'flyway -locations="$migration_locations" '
+            f'-target="$TARGET_FLYWAY_VERSION" {command}'
+        )
+        if text.count(expected) != 1:
+            raise GateError(
+                f"base migration Job does not run target-scoped {command}"
+            )
 
 
 def validate_migration_render(
@@ -1769,6 +1815,7 @@ def _parser() -> argparse.ArgumentParser:
 
     base_job = subparsers.add_parser("validate-base-migration-job")
     base_job.add_argument("--job", type=Path, required=True)
+    base_job.add_argument("--source-sha", required=True)
 
     source = subparsers.add_parser("verify-pre-reconstruction-source")
     source.add_argument("--root", type=Path, required=True)
@@ -1912,7 +1959,8 @@ def main(argv: list[str] | None = None) -> int:
             print("verified the sealed base migration Job is inert")
         elif args.command == "validate-base-migration-job":
             validate_base_migration_job(
-                _read_regular_file(args.job, "base migration Job", MAX_JOB_BYTES)
+                _read_regular_file(args.job, "base migration Job", MAX_JOB_BYTES),
+                args.source_sha,
             )
             print("verified the sealed base migration Job is canonically inert")
         elif args.command == "verify-pre-reconstruction-source":
