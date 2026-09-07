@@ -6,7 +6,9 @@
 
 | 영역 | 내용 |
 |------|------|
-| `src/main/java/ai/devpath/shared/event` | Kafka(Outbox)로 발행되는 도메인 이벤트 스키마 |
+| `src/main/java/ai/devpath/shared/event` | Kafka(Outbox)로 발행되는 도메인 이벤트 스키마. 멘토 액세스 대기·활성화·초대 배치 완료·초대 메일 발송 계약 포함 |
+| `src/main/resources/db/migration/V202609051001__public_support_requests.sql` | 비로그인 공개 문의를 저장하는 `support_requests` 스키마 계약 |
+| `src/main/resources/db/migration/V202609051002__mentor_access.sql`–`V202609051004__mentor_invite_batches.sql` | 멘토 대기/활성화, 해시 초대 코드·사용 기록, 일일 초대 배치 스키마 계약 |
 | `docker-compose.yml` | 로컬 개발 인프라 (PostgreSQL 17, Redis 7, pgvector, Elasticsearch, Kafka KRaft) |
 
 - Java 21 · Gradle (Kotlin DSL) · `java-library`
