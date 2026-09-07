@@ -820,7 +820,7 @@ jobs:
           pr_base="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.base.ref')"
           pr_head="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.ref')"
           pr_head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.sha')"
-          test "$pr_author" = "app/github-actions"
+          test "$pr_author" = "github-actions[bot]"
           test "$pr_base" = "main"
           test "$pr_head" = "develop"
           test "$pr_head_sha" = "$EXPECTED_DEVELOP_SHA"

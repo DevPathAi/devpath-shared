@@ -129,7 +129,7 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
             'test "$sealed_sha" = "$EXPECTED_SEALED_SHA"',
             'git push origin "$sealed_sha:refs/heads/develop"',
             'test "$server_develop" = "$EXPECTED_SEALED_SHA"',
-            'test "$pr_author" = "app/github-actions"',
+            'test "$pr_author" = "github-actions[bot]"',
         )
         for fragment in required_fragments:
             self.assertIn(fragment, self.seal)
