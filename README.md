@@ -6,7 +6,9 @@
 
 | 영역 | 내용 |
 |------|------|
-| `src/main/java/ai/devpath/shared/event` | Kafka(Outbox)로 발행되는 도메인 이벤트 스키마 |
+| `src/main/java/ai/devpath/shared/event` | Kafka(Outbox)로 발행되는 도메인 이벤트 스키마. 멘토 액세스 대기·활성화·초대 배치 완료·초대 메일 발송 계약 포함 |
+| `src/main/resources/db/migration/V202609051001__public_support_requests.sql` | 비로그인 공개 문의를 저장하는 `support_requests` 스키마 계약 |
+| `src/main/resources/db/migration/V202609051002__mentor_access.sql`–`V202609051004__mentor_invite_batches.sql` | 멘토 대기/활성화, 해시 초대 코드·사용 기록, 일일 초대 배치 스키마 계약 |
 | `docker-compose.yml` | 로컬 개발 인프라 (PostgreSQL 17, Redis 7, pgvector, Elasticsearch, Kafka KRaft) |
 
 - Java 21 · Gradle (Kotlin DSL) · `java-library`
@@ -38,15 +40,15 @@ docker compose up -d
 
 서비스 레포는 GitHub Packages의 immutable Maven 좌표를 참조합니다.
 
-### ET9 immutable package release
+### RM immutable package release
 
-ET9 좌표 `ai.devpath:devpath-shared:0.0.1-et9.20260816`은 다음 세 Linux publication byte를 고정합니다.
+RM 좌표 `ai.devpath:devpath-shared:0.0.1-rm.20260907`는 다음 세 Linux publication byte를 고정합니다.
 
 | 파일 | bytes | SHA-256 |
 |------|------:|---------|
-| `devpath-shared-0.0.1-et9.20260816.jar` | 1,177,131 | `94e2adb769790d813a872163347ede20ad4c75ae88e5811df2ec6625a340f21f` |
-| `devpath-shared-0.0.1-et9.20260816.pom` | 1,546 | `10daef2cdf7d436f952fa6dab10a27253a933af013093bb6967dd220010dbdd7` |
-| `devpath-shared-0.0.1-et9.20260816.module` | 2,888 | `8c6445b67a674f8f65087728c5e602d9d3e06dd3c1a5bdbbe6d8f2d55779531c` |
+| `devpath-shared-0.0.1-rm.20260907.jar` | 1,239,001 | `3a64de1a1773f1aa05ccd801a88f01ef2cead887e44930554074230fd01f2996` |
+| `devpath-shared-0.0.1-rm.20260907.pom` | 1,545 | `3d2dbf7bc1dd2ef98d327d941ac4c23b419e22fb8d69857d4f7a02f556b3ba50` |
+| `devpath-shared-0.0.1-rm.20260907.module` | 2,883 | `a6b05c5408dfbd55ee7edcd3ce9492142e3d15c9d6f904b178d64d088e0a6964` |
 
 PR CI는 Temurin `21.0.12+8.0.LTS`와 Gradle `9.5.1`로 clean build한 세 파일을 byte-for-byte 검증합니다. `main`의 첫 시도에서만 publish workflow가 실행되며, 원격 좌표가 완전히 없으면 게시하고 이미 있으면 세 파일이 모두 exact match일 때만 성공합니다. 일부만 존재하거나 한 byte라도 다른 좌표는 덮어쓰지 않고 실패합니다. 게시 후에는 인증된 GitHub Packages 다운로드로 세 파일을 다시 확인합니다.
 

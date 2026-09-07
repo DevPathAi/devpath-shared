@@ -35,20 +35,20 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
     def test_frozen_coordinate_and_linux_publication_bytes(self) -> None:
         self.assertEqual("ai.devpath", PACKAGE.GROUP_ID)
         self.assertEqual("devpath-shared", PACKAGE.ARTIFACT_ID)
-        self.assertEqual("0.0.1-et11.20260822", PACKAGE.VERSION)
+        self.assertEqual("0.0.1-rm.20260907", PACKAGE.VERSION)
         self.assertEqual(
             {
-                "devpath-shared-0.0.1-et11.20260822.jar": (
-                    1_229_365,
-                    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e",
+                "devpath-shared-0.0.1-rm.20260907.jar": (
+                    1_239_001,
+                    "3a64de1a1773f1aa05ccd801a88f01ef2cead887e44930554074230fd01f2996",
                 ),
-                "devpath-shared-0.0.1-et11.20260822.pom": (
-                    1_547,
-                    "67786fc16d3a87c15cb5dfce32bce6973d2bab32b4f35c105fd81c3f37d188f0",
+                "devpath-shared-0.0.1-rm.20260907.pom": (
+                    1_545,
+                    "3d2dbf7bc1dd2ef98d327d941ac4c23b419e22fb8d69857d4f7a02f556b3ba50",
                 ),
-                "devpath-shared-0.0.1-et11.20260822.module": (
-                    2_893,
-                    "94f4af984231fe4b990091fd4575942a0626ef8aadae23e1cfe4f12a4b5d3acf",
+                "devpath-shared-0.0.1-rm.20260907.module": (
+                    2_883,
+                    "a6b05c5408dfbd55ee7edcd3ce9492142e3d15c9d6f904b178d64d088e0a6964",
                 ),
             },
             {name: (spec.size, spec.sha256) for name, spec in PACKAGE.ARTIFACTS.items()},
@@ -72,16 +72,16 @@ class ImmutablePublicationUnitTest(unittest.TestCase):
             b"<modelVersion>4.0.0</modelVersion>"
             b"<groupId>ai.devpath</groupId>"
             b"<artifactId>devpath-shared</artifactId>"
-            b"<version>0.0.1-et11.20260822</version></project>\n"
+            b"<version>0.0.1-rm.20260907</version></project>\n"
         )
         module = (
             b'{"component":{"group":"ai.devpath","module":"devpath-shared",'
-            b'"version":"0.0.1-et11.20260822"},"variants":[]}\n'
+            b'"version":"0.0.1-rm.20260907"},"variants":[]}\n'
         )
         PACKAGE.validate_pom_semantics(pom)
         PACKAGE.validate_module_semantics(module)
         with self.assertRaises(PACKAGE.VerificationError):
-            PACKAGE.validate_pom_semantics(pom.replace(b"et11", b"et9"))
+            PACKAGE.validate_pom_semantics(pom.replace(b"rm", b"et9"))
         with self.assertRaises(PACKAGE.VerificationError):
             PACKAGE.validate_module_semantics(module.replace(b"devpath-shared", b"other"))
 
@@ -245,6 +245,9 @@ class WorkflowContractTest(unittest.TestCase):
         for filename in (
             "V202608161009__lcs_mentor_snapshot_contract.sql",
             "V202608161011__validate_lcs_mentor_snapshot_contract.sql",
+            "V202609051002__mentor_access.sql",
+            "V202609051003__mentor_invite_codes.sql",
+            "V202609051004__mentor_invite_batches.sql",
         ):
             self.assertIn(
                 f"/src/main/resources/db/migration/{filename} text eol=lf",
@@ -261,6 +264,10 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("preflight-remote", self.publish)
         self.assertIn("steps.package-state.outputs.publish_needed == 'true'", self.publish)
         self.assertIn("postflight-remote", self.publish)
+        self.assertIn(
+            "build/libs/devpath-shared-0.0.1-rm.20260907.jar",
+            self.publish,
+        )
         self.assertIn("environment: mission-spine-shared-package-publish", self.publish)
         self.assertIn("prevent_self_review", self.publish)
         self.assertIn("21.0.12+8.0.LTS", self.publish)
@@ -282,6 +289,10 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("generatePomFileForMavenPublication", self.ci)
         self.assertIn("generateMetadataFileForMavenPublication", self.ci)
         self.assertIn("verify-local", self.ci)
+        self.assertIn(
+            "build/libs/devpath-shared-0.0.1-rm.20260907.jar",
+            self.ci,
+        )
         self.assertIn("21.0.12+8.0.LTS", self.ci)
         self.assertNotIn("java-version: 21.0.12+8\n", self.ci)
         self.assertIn(
@@ -358,6 +369,7 @@ class WorkflowContractTest(unittest.TestCase):
         )
         self.assertIn('GITHUB_API_VERSION: "2026-03-10"', self.migration)
         self.assertIn("validate-base-migration-job", self.migration)
+        self.assertIn('--source-sha "$SOURCE_SHA"', self.migration)
         self.assertIn("set-migration-release", self.migration)
         self.assertNotIn('"$KUSTOMIZE_BIN" edit set image', self.migration)
         self.assertNotIn("! grep -F 'patches:'", self.migration)
@@ -443,15 +455,15 @@ class MigrationReleaseGateTest(unittest.TestCase):
             "shared_migration": {
                 "repository": "DevPathAi/devpath-shared",
                 "source_sha": self.source_sha,
-                "shared_version": "0.0.1-et11.20260822",
+                "shared_version": "0.0.1-rm.20260907",
                 "shared_jar_sha256": (
-                    "eaab3aa3ad891f7dfeafb084e63d89645978d7716eb0c90a0dda42e0c40dac2e"
+                    "3a64de1a1773f1aa05ccd801a88f01ef2cead887e44930554074230fd01f2996"
                 ),
                 "image_repository": "ghcr.io/devpathai/devpath-migration",
                 "image_digest": "sha256:" + "a" * 64,
-                "flyway_target": "202608221001",
+                "flyway_target": "202609051004",
                 "required_migration": (
-                    "V202608221001__correct_question_bank_accuracy.sql"
+                    "V202609051004__mentor_invite_batches.sql"
                 ),
                 "rollback_policy": "additive-retained",
             },
