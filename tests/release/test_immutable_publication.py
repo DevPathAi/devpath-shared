@@ -245,6 +245,9 @@ class WorkflowContractTest(unittest.TestCase):
         for filename in (
             "V202608161009__lcs_mentor_snapshot_contract.sql",
             "V202608161011__validate_lcs_mentor_snapshot_contract.sql",
+            "V202609051002__mentor_access.sql",
+            "V202609051003__mentor_invite_codes.sql",
+            "V202609051004__mentor_invite_batches.sql",
         ):
             self.assertIn(
                 f"/src/main/resources/db/migration/{filename} text eol=lf",
