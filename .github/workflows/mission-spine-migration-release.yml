@@ -859,3 +859,141 @@ jobs:
             echo "- tree SHA: $EXPECTED_TREE_SHA"
             echo "- pull request: https://github.com/$GITHUB_REPOSITORY/pull/85"
           } >>"$GITHUB_STEP_SUMMARY"
+
+  attest-develop:
+    if: >-
+      github.ref == 'refs/heads/chore/shared-promotion-bot-20260907'
+      && inputs.release_id == 'shared-main-attest-20260907-mentor-access'
+    name: attest-develop
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      ATTESTATION_ID: shared-main-attest-20260907-mentor-access
+      ATTESTATION_PATH: docs/releases/2026-09-07-mentor-access-promotion.md
+      EXPECTED_MAIN_SHA: b6b8c6ba79818af4d338f2875352ecd07f455068
+      EXPECTED_DEVELOP_SHA: e805e9580381c79d56497b844f428f4b5912977a
+      EXPECTED_TREE_SHA: efb73a6b5aab7c78d7580bfe97d7f0c35abfc417
+      EXPECTED_BLOB_SHA: ffc4dbdd66345ccc459df5ba11fa26ef3f61fc30
+      EXPECTED_ATTESTED_TREE_SHA: 3565aba4733b601285ca4fecf50bd443257797ba
+      EXPECTED_ATTESTED_SHA: 5b688a2274ad0de8285b0d77d3a8a6ea802b3808
+      EXPECTED_CONTENT_SHA256: 6e84dddd3b62aa9439ead259b8961df3ff42fd71739f10dd5cb49dc71ef66bb6
+      EXPECTED_NONCE_SHA256: "08e322cb35f2059cdb395ad1367bc0342c665c53c06c3398fcfcda1bd90eea09"
+      INPUT_ATTESTATION_ID: ${{ inputs.release_id }}
+      INPUT_MAIN_SHA: ${{ inputs.source_sha }}
+      INPUT_DEVELOP_SHA: ${{ inputs.sealed_release_sha }}
+      INPUT_MAIN_SENTINEL: ${{ inputs.gitops_source_sha }}
+      INPUT_NONCE_SHA256: ${{ inputs.release_manifest_sha256 }}
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_API_VERSION: "2026-03-10"
+    steps:
+      - name: Prove the exact release attestation context
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = "VelkaressiaBlutkrone"
+          test "$GITHUB_TRIGGERING_ACTOR" = "VelkaressiaBlutkrone"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$GITHUB_REF" = "refs/heads/chore/shared-promotion-bot-20260907"
+          test "$INPUT_ATTESTATION_ID" = "$ATTESTATION_ID"
+          test "$INPUT_MAIN_SHA" = "$EXPECTED_MAIN_SHA"
+          test "$INPUT_DEVELOP_SHA" = "$EXPECTED_DEVELOP_SHA"
+          test "$INPUT_MAIN_SENTINEL" = "$EXPECTED_MAIN_SHA"
+          test "$INPUT_NONCE_SHA256" = "$EXPECTED_NONCE_SHA256"
+
+      - name: Checkout the exact sealed develop head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6.1.0
+        with:
+          ref: develop
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Create and push one exact reviewable release attestation
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          current_main="$(git rev-parse refs/remotes/origin/main)"
+          current_develop="$(
+            gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/branches/develop" --jq '.commit.sha'
+          )"
+          test "$current_main" = "$EXPECTED_MAIN_SHA"
+          test "$current_develop" = "$EXPECTED_DEVELOP_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_DEVELOP_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE_SHA"
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+          pr_author="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.user.login')"
+          pr_state="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.state')"
+          pr_base="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.base.ref')"
+          pr_head="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.ref')"
+          pr_head_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.sha')"
+          test "$pr_author" = "github-actions[bot]"
+          test "$pr_state" = "open"
+          test "$pr_base" = "main"
+          test "$pr_head" = "develop"
+          test "$pr_head_sha" = "$EXPECTED_DEVELOP_SHA"
+
+          mkdir -p "$(dirname "$ATTESTATION_PATH")"
+          cat >"$ATTESTATION_PATH" <<'EOF'
+          # Mentor access Shared promotion attestation
+
+          - Release date: 2026-09-07
+          - Source PR: #83
+          - Promotion PR: #85
+          - Content commit: ca9aaa72d0a039d77afa7bdf64bb7221c10dd46f
+          - Sealed develop parent: e805e9580381c79d56497b844f428f4b5912977a
+          - Published coordinate: ai.devpath:devpath-shared:0.0.1-rm.20260907
+          - Scope: Shared package publication only; no GitOps migration or production deployment.
+          EOF
+          test "$(sha256sum "$ATTESTATION_PATH" | awk '{print $1}')" = "$EXPECTED_CONTENT_SHA256"
+          test "$(git hash-object "$ATTESTATION_PATH")" = "$EXPECTED_BLOB_SHA"
+          git add -- "$ATTESTATION_PATH"
+          mapfile -t changes < <(git diff --cached --name-only)
+          test "${#changes[@]}" -eq 1
+          test "${changes[0]}" = "$ATTESTATION_PATH"
+          git diff --cached --check
+          attested_tree="$(git write-tree)"
+          test "$attested_tree" = "$EXPECTED_ATTESTED_TREE_SHA"
+
+          export GIT_AUTHOR_NAME="github-actions[bot]"
+          export GIT_AUTHOR_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_AUTHOR_DATE="2026-09-07T11:14:00Z"
+          export GIT_COMMITTER_NAME="github-actions[bot]"
+          export GIT_COMMITTER_EMAIL="41898282+github-actions[bot]@users.noreply.github.com"
+          export GIT_COMMITTER_DATE="2026-09-07T11:14:00Z"
+          attested_sha="$(
+            git commit-tree "$EXPECTED_ATTESTED_TREE_SHA" -p "$EXPECTED_DEVELOP_SHA" \
+              -m "docs(release): attest mentor access promotion"
+          )"
+          test "$attested_sha" = "$EXPECTED_ATTESTED_SHA"
+          test "$(git rev-parse "$attested_sha^{tree}")" = "$EXPECTED_ATTESTED_TREE_SHA"
+          test "$(git rev-parse "$attested_sha^")" = "$EXPECTED_DEVELOP_SHA"
+          test "$(git show -s --format=%an "$attested_sha")" = "github-actions[bot]"
+          test "$(git show -s --format=%cn "$attested_sha")" = "github-actions[bot]"
+
+          git push origin "$attested_sha:refs/heads/develop"
+
+          server_develop="$(
+            git ls-remote --heads origin refs/heads/develop | awk '{print $1}'
+          )"
+          test "$server_develop" = "$EXPECTED_ATTESTED_SHA"
+          pr_head_after=""
+          for _ in {1..10}; do
+            pr_head_after="$(gh api "repos/$GITHUB_REPOSITORY/pulls/85" --jq '.head.sha')"
+            if [ "$pr_head_after" = "$EXPECTED_ATTESTED_SHA" ]; then
+              break
+            fi
+            sleep 2
+          done
+          test "$pr_head_after" = "$EXPECTED_ATTESTED_SHA"
+
+          {
+            echo "### Reviewable release attestation"
+            echo "- previous develop SHA: $EXPECTED_DEVELOP_SHA"
+            echo "- attested develop SHA: $EXPECTED_ATTESTED_SHA"
+            echo "- attested tree SHA: $EXPECTED_ATTESTED_TREE_SHA"
+            echo "- path: $ATTESTATION_PATH"
+            echo "- pull request: https://github.com/$GITHUB_REPOSITORY/pull/85"
+          } >>"$GITHUB_STEP_SUMMARY"

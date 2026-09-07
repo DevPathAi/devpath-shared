@@ -17,6 +17,11 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
         )
         if separator:
             cls.seal = "  seal-develop:\n" + cls.seal
+        cls.seal, separator, cls.attestation = cls.seal.partition(
+            "  attest-develop:\n"
+        )
+        if separator:
+            cls.attestation = "  attest-develop:\n" + cls.attestation
 
     def test_workflow_preserves_main_deploy_and_isolates_branch_dispatcher(self) -> None:
         self.assertIn("name: Mission Spine - sealed migration GitOps release", self.workflow)
@@ -140,6 +145,39 @@ class Prod26R4IndependentDispatchContractTest(unittest.TestCase):
             "refs/heads/main",
         ):
             self.assertNotIn(forbidden, self.seal)
+
+    def test_release_attestation_is_one_exact_reviewable_bot_push(self) -> None:
+        required_fragments = (
+            "  attest-develop:\n",
+            "github.ref == 'refs/heads/chore/shared-promotion-bot-20260907'",
+            "shared-main-attest-20260907-mentor-access",
+            "permissions:\n      contents: write\n      pull-requests: read",
+            "b6b8c6ba79818af4d338f2875352ecd07f455068",
+            "e805e9580381c79d56497b844f428f4b5912977a",
+            "efb73a6b5aab7c78d7580bfe97d7f0c35abfc417",
+            "ffc4dbdd66345ccc459df5ba11fa26ef3f61fc30",
+            "3565aba4733b601285ca4fecf50bd443257797ba",
+            "5b688a2274ad0de8285b0d77d3a8a6ea802b3808",
+            "6e84dddd3b62aa9439ead259b8961df3ff42fd71739f10dd5cb49dc71ef66bb6",
+            'EXPECTED_NONCE_SHA256: "08e322cb35f2059cdb395ad1367bc0342c665c53c06c3398fcfcda1bd90eea09"',
+            "docs/releases/2026-09-07-mentor-access-promotion.md",
+            'test "$(git hash-object "$ATTESTATION_PATH")" = "$EXPECTED_BLOB_SHA"',
+            'test "$attested_tree" = "$EXPECTED_ATTESTED_TREE_SHA"',
+            'GIT_AUTHOR_DATE="2026-09-07T11:14:00Z"',
+            'git commit-tree "$EXPECTED_ATTESTED_TREE_SHA" -p "$EXPECTED_DEVELOP_SHA"',
+            'test "$attested_sha" = "$EXPECTED_ATTESTED_SHA"',
+            'git push origin "$attested_sha:refs/heads/develop"',
+            'test "$server_develop" = "$EXPECTED_ATTESTED_SHA"',
+        )
+        for fragment in required_fragments:
+            self.assertIn(fragment, self.attestation)
+        for forbidden in (
+            "--force",
+            "administration: write",
+            "pull-requests: write",
+            "refs/heads/main",
+        ):
+            self.assertNotIn(forbidden, self.attestation)
 
 
 if __name__ == "__main__":
