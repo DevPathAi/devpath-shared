@@ -129,7 +129,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             "gitops_write_app_slug": "devpath-gitops-release",
             "gitops_write_app_id": "4242",
             "gitops_write_app_installation_id": "7654321",
-            "sole_changed_path": "apps/devpath-migration/base/kustomization.yaml",
+            "changed_paths": list(MIGRATION.MIGRATION_PATHS),
             "rendered_job_name": (
                 "devpath-flyway-migrate-" + "8" * 12 + "-" + "3" * 24
             ),
@@ -141,9 +141,54 @@ class MigrationResultEvidenceTest(unittest.TestCase):
         arguments.update(overrides)
         return MIGRATION.build_result_evidence(**arguments)
 
+    def test_writer_fence_transform_is_exact_and_fail_closed(self) -> None:
+        source = (
+            b"apiVersion: kustomize.config.k8s.io/v1beta1\n"
+            b"kind: Kustomization\n"
+            b"resources:\n"
+            b"- deployment.yaml\n"
+            b"images:\n"
+            b"- name: ghcr.io/devpathai/devpath-platform-svc\n"
+            b"  newName: ghcr.io/devpathai/devpath-platform-svc\n"
+            b"  newTag: main\n"
+        )
+        expected = (
+            source
+            + b"replicas:\n"
+            + b"- name: devpath-platform-svc\n"
+            + b"  count: 0\n"
+        )
+
+        rendered = MIGRATION.render_writer_fence_kustomization(
+            source, "devpath-platform-svc"
+        )
+
+        self.assertEqual(expected, rendered)
+        MIGRATION.validate_writer_fence_kustomization(
+            rendered, "devpath-platform-svc"
+        )
+        with self.assertRaises(MIGRATION.GateError):
+            MIGRATION.render_writer_fence_kustomization(
+                source + b"replicas: []\n", "devpath-platform-svc"
+            )
+        for mutation in (
+            expected + b"replicas: []\n",
+            expected.replace(b"  count: 0\n", b"  count: 1\n"),
+            expected.replace(
+                b"- name: devpath-platform-svc\n",
+                b"- name: devpath-sandbox-svc\n",
+            ),
+        ):
+            with self.subTest(mutation=mutation), self.assertRaises(
+                MIGRATION.GateError
+            ):
+                MIGRATION.validate_writer_fence_kustomization(
+                    mutation, "devpath-platform-svc"
+                )
+
     def expected(self) -> dict[str, object]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "document_type": "mission-spine-migration-result",
             "release_id": self.release_id,
             "candidate_spec_sha256": self.candidate_sha,
@@ -186,9 +231,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                 "write_app_id": 4242,
                 "write_app_installation_id": 7654321,
                 "branch": "main",
-                "sole_changed_path": (
-                    "apps/devpath-migration/base/kustomization.yaml"
-                ),
+                "changed_paths": list(MIGRATION.MIGRATION_PATHS),
                 "rendered_job_name": (
                     "devpath-flyway-migrate-" + "8" * 12 + "-" + "3" * 24
                 ),
@@ -223,7 +266,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
         self,
     ) -> None:
         mutations: list[tuple[tuple[str, ...], object]] = [
-            (("schema_version",), 2),
+            (("schema_version",), 1),
             (("schema_version",), True),
             (("candidate_spec_sha256",), "0" * 64),
             (("shared", "workflow_sha256"), "0" * 64),
@@ -236,7 +279,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             (("gitops", "write_app_id"), True),
             (("gitops", "publish_mode"), "unknown"),
             (("gitops", "pre_push_main_sha"), "9" * 40),
-            (("gitops", "sole_changed_path"), "apps/other/kustomization.yaml"),
+            (("gitops", "changed_paths"), ["apps/other/kustomization.yaml"]),
             (("gitops", "rendered_job_name"), "devpath-flyway-migrate-latest"),
             (("migration_image", "digest"), "sha256:" + "0" * 64),
         ]
@@ -264,8 +307,8 @@ class MigrationResultEvidenceTest(unittest.TestCase):
 
         raw = self.build()
         duplicate = raw.replace(
-            b'{"schema_version":1,',
-            b'{"schema_version":1,"schema_version":1,',
+            b'{"schema_version":2,',
+            b'{"schema_version":2,"schema_version":2,',
             1,
         )
         for changed in (duplicate, raw.rstrip(b"\n"), raw + b"\n", b" " + raw):
@@ -627,16 +670,14 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             with self.subTest(label=label), self.assertRaises(MIGRATION.GateError):
                 validate(**overrides)
 
-    def test_migration_child_must_be_the_exact_single_path_commit(self) -> None:
+    def test_migration_child_must_be_the_exact_writer_fenced_commit(self) -> None:
         self.assertEqual(
             {
                 "pre_push_main_sha": self.base_sha,
                 "migration_commit_sha": self.migration_sha,
                 "migration_tree_sha": self.tree_sha,
                 "publish_mode": "published",
-                "sole_changed_path": (
-                    "apps/devpath-migration/base/kustomization.yaml"
-                ),
+                "changed_paths": list(MIGRATION.MIGRATION_PATHS),
                 "commit_subject": self.subject,
                 "commit_author_name": "devpath-gitops-release[bot]",
                 "commit_committer_name": "devpath-gitops-release[bot]",
@@ -650,7 +691,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                 migration_parent_sha=self.base_sha,
                 migration_tree_sha=self.tree_sha,
                 expected_tree_sha=self.tree_sha,
-                changed_paths=["apps/devpath-migration/base/kustomization.yaml"],
+                changed_paths=list(MIGRATION.MIGRATION_PATHS),
                 commit_subject=self.subject,
                 commit_author_name="devpath-gitops-release[bot]",
                 commit_committer_name="devpath-gitops-release[bot]",
@@ -666,7 +707,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             migration_parent_sha=self.base_sha,
             migration_tree_sha=self.tree_sha,
             expected_tree_sha=self.tree_sha,
-            changed_paths=["apps/devpath-migration/base/kustomization.yaml"],
+            changed_paths=list(MIGRATION.MIGRATION_PATHS),
             commit_subject=self.subject,
             commit_author_name="devpath-gitops-release[bot]",
             commit_committer_name="devpath-gitops-release[bot]",
@@ -679,10 +720,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             "migration_parent_sha": "9" * 40,
             "migration_tree_sha": "0" * 40,
             "expected_tree_sha": "9" * 40,
-            "changed_paths": [
-                "apps/devpath-migration/base/kustomization.yaml",
-                "apps/other/base/kustomization.yaml",
-            ],
+            "changed_paths": [MIGRATION.MIGRATION_PATH],
             "commit_subject": self.subject + " drift",
             "commit_author_name": "attacker",
             "commit_committer_name": "attacker",
@@ -698,9 +736,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                 "migration_parent_sha": self.base_sha,
                 "migration_tree_sha": self.tree_sha,
                 "expected_tree_sha": self.tree_sha,
-                "changed_paths": [
-                    "apps/devpath-migration/base/kustomization.yaml"
-                ],
+                "changed_paths": list(MIGRATION.MIGRATION_PATHS),
                 "commit_subject": self.subject,
                 "commit_author_name": "devpath-gitops-release[bot]",
                 "commit_committer_name": "devpath-gitops-release[bot]",
@@ -735,9 +771,7 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             "supplied_source_sha": self.migration_sha,
             "current_head_sha": self.migration_sha,
             "current_parent_shas": [self.base_sha],
-            "changed_paths": [
-                "apps/devpath-migration/base/kustomization.yaml"
-            ],
+            "changed_paths": list(MIGRATION.MIGRATION_PATHS),
             "commit_subject": self.subject,
             "commit_author_name": "devpath-gitops-release[bot]",
             "commit_committer_name": "devpath-gitops-release[bot]",
@@ -866,8 +900,43 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             "  backoffLimit: 3\n"
             "  template:\n"
             "    spec:\n"
+            "      serviceAccountName: devpath-migration-fence\n"
+            "      automountServiceAccountToken: false\n"
             "      initContainers:\n"
-            "        - name: preflight\n"
+            "        - name: wait-for-writer-deployments\n"
+            f"          image: {MIGRATION.KUBECTL_IMAGE}\n"
+            "          args:\n"
+            "            - wait\n"
+            "            - --for=jsonpath={.spec.replicas}=0\n"
+            "            - deployment/devpath-platform-svc\n"
+            "            - deployment/devpath-sandbox-svc\n"
+            "            - --timeout=10m\n"
+            "          securityContext:\n"
+            "            runAsUser: 65532\n"
+            "            readOnlyRootFilesystem: true\n"
+            "        - name: wait-for-platform-pods\n"
+            f"          image: {MIGRATION.KUBECTL_IMAGE}\n"
+            "          args:\n"
+            "            - wait\n"
+            "            - --for=delete\n"
+            "            - pod\n"
+            "            - --selector=app=devpath-platform-svc\n"
+            "            - --timeout=10m\n"
+            "          securityContext:\n"
+            "            runAsUser: 65532\n"
+            "            readOnlyRootFilesystem: true\n"
+            "        - name: wait-for-sandbox-pods\n"
+            f"          image: {MIGRATION.KUBECTL_IMAGE}\n"
+            "          args:\n"
+            "            - wait\n"
+            "            - --for=delete\n"
+            "            - pod\n"
+            "            - --selector=app=devpath-sandbox-svc\n"
+            "            - --timeout=10m\n"
+            "          securityContext:\n"
+            "            runAsUser: 65532\n"
+            "            readOnlyRootFilesystem: true\n"
+            "        - name: sandbox-low-lock-preflight\n"
             "          env:\n"
             "            - name: EXPECTED_SHARED_COMMIT\n"
             f'              value: "{self.source_sha}"\n'
@@ -890,6 +959,13 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             "              test -f /flyway/sql/V202609051004__mentor_invite_batches.sql\n"
             '              flyway -locations="$migration_locations" -target="$TARGET_FLYWAY_VERSION" migrate\n'
             '              flyway -locations="$migration_locations" -target="$TARGET_FLYWAY_VERSION" validate\n'
+            "      volumes:\n"
+            "        - name: writer-fence-kube-api\n"
+            "          projected:\n"
+            "            sources:\n"
+            "              - serviceAccountToken:\n"
+            "                  path: token\n"
+            "                  expirationSeconds: 3600\n"
         ).encode()
         MIGRATION.validate_base_migration_job(canonical_job, self.source_sha)
 
@@ -1053,10 +1129,11 @@ class MigrationResultEvidenceTest(unittest.TestCase):
             git("init", "-q")
             git("config", "user.name", "base-author")
             git("config", "user.email", "base@example.invalid")
-            path = root / "apps/devpath-migration/base/kustomization.yaml"
-            path.parent.mkdir(parents=True)
-            path.write_text("base\n", encoding="utf-8", newline="\n")
-            git("add", "--", "apps/devpath-migration/base/kustomization.yaml")
+            paths = [root / relative for relative in MIGRATION.MIGRATION_PATHS]
+            for path in paths:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("base\n", encoding="utf-8", newline="\n")
+            git("add", "--", *MIGRATION.MIGRATION_PATHS)
             git("commit", "-q", "-m", "base")
             base_sha = git("rev-parse", "HEAD")
             self.assertEqual(
@@ -1075,8 +1152,9 @@ class MigrationResultEvidenceTest(unittest.TestCase):
                 "user.email",
                 "devpath-gitops-release[bot]@users.noreply.github.com",
             )
-            path.write_text("migration\n", encoding="utf-8", newline="\n")
-            git("add", "--", "apps/devpath-migration/base/kustomization.yaml")
+            for path in paths:
+                path.write_text("migration\n", encoding="utf-8", newline="\n")
+            git("add", "--", *MIGRATION.MIGRATION_PATHS)
             git("commit", "-q", "-m", self.subject)
             migration_sha = git("rev-parse", "HEAD")
             tree_sha = git("rev-parse", "HEAD^{tree}")
