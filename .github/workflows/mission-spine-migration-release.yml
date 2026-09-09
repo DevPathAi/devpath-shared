@@ -325,7 +325,7 @@ jobs:
               env.write(f"KUSTOMIZE_BIN={executable}\n")
           PY
 
-      - name: Reconstruct the one-file migration tree and exact rendered Job
+      - name: Reconstruct the exact migration and writer-fence tree
         id: expected
         env:
           IMAGE_DIGEST: ${{ steps.release.outputs.image_digest }}
@@ -334,9 +334,13 @@ jobs:
           [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
           test "$IMAGE_DIGEST" != "sha256:0000000000000000000000000000000000000000000000000000000000000000"
           kustomization="$GITHUB_WORKSPACE/expected-gitops/apps/devpath-migration/base/kustomization.yaml"
+          platform_kustomization="$GITHUB_WORKSPACE/expected-gitops/apps/devpath-platform-svc/base/kustomization.yaml"
+          sandbox_kustomization="$GITHUB_WORKSPACE/expected-gitops/apps/devpath-sandbox-svc/base/kustomization.yaml"
           job="$GITHUB_WORKSPACE/expected-gitops/apps/devpath-migration/base/job.yaml"
-          test -f "$kustomization"
-          test ! -L "$kustomization"
+          for source in "$kustomization" "$platform_kustomization" "$sandbox_kustomization"; do
+            test -f "$source"
+            test ! -L "$source"
+          done
           test -f "$job"
           test ! -L "$job"
           python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
@@ -348,21 +352,43 @@ jobs:
             --image-digest "$IMAGE_DIGEST" \
             --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
             --github-output "$GITHUB_OUTPUT"
+          python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
+            set-writer-fence --kustomization "$platform_kustomization" \
+            --service devpath-platform-svc
+          python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
+            set-writer-fence --kustomization "$sandbox_kustomization" \
+            --service devpath-sandbox-svc
           render="$RUNNER_TEMP/mission-spine-migration-render.yaml"
+          platform_render="$RUNNER_TEMP/mission-spine-platform-writer-fence.yaml"
+          sandbox_render="$RUNNER_TEMP/mission-spine-sandbox-writer-fence.yaml"
           test ! -e "$render"
+          test ! -e "$platform_render"
+          test ! -e "$sandbox_render"
           umask 077
           "$KUSTOMIZE_BIN" build . >"$render"
+          "$KUSTOMIZE_BIN" build "$(dirname "$platform_kustomization")" >"$platform_render"
+          "$KUSTOMIZE_BIN" build "$(dirname "$sandbox_kustomization")" >"$sandbox_render"
           python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
             validate-migration-render --render "$render" \
             --image-digest "$IMAGE_DIGEST" \
             --release-manifest-sha256 "$RELEASE_MANIFEST_SHA256" \
             --github-output "$GITHUB_OUTPUT"
+          python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
+            validate-writer-fence-render --render "$platform_render" \
+            --service devpath-platform-svc
+          python3 "$GITHUB_WORKSPACE/scripts/release/migration_release_gate.py" \
+            validate-writer-fence-render --render "$sandbox_render" \
+            --service devpath-sandbox-svc
           mapfile -t changes < <(git -C "$GITHUB_WORKSPACE/expected-gitops" diff --name-only)
-          test "${#changes[@]}" -eq 1
+          test "${#changes[@]}" -eq 3
           test "${changes[0]}" = "apps/devpath-migration/base/kustomization.yaml"
+          test "${changes[1]}" = "apps/devpath-platform-svc/base/kustomization.yaml"
+          test "${changes[2]}" = "apps/devpath-sandbox-svc/base/kustomization.yaml"
           git -C "$GITHUB_WORKSPACE/expected-gitops" diff --check
           git -C "$GITHUB_WORKSPACE/expected-gitops" add \
-            apps/devpath-migration/base/kustomization.yaml
+            apps/devpath-migration/base/kustomization.yaml \
+            apps/devpath-platform-svc/base/kustomization.yaml \
+            apps/devpath-sandbox-svc/base/kustomization.yaml
           expected_tree_sha="$(git -C "$GITHUB_WORKSPACE/expected-gitops" write-tree)"
           [[ "$expected_tree_sha" =~ ^[0-9a-f]{40}$ ]]
           printf 'expected_tree_sha=%s\n' "$expected_tree_sha" >>"$GITHUB_OUTPUT"
@@ -429,13 +455,24 @@ jobs:
             cp --no-preserve=mode,ownership,timestamps \
               expected-gitops/apps/devpath-migration/base/kustomization.yaml \
               gitops/apps/devpath-migration/base/kustomization.yaml
+            cp --no-preserve=mode,ownership,timestamps \
+              expected-gitops/apps/devpath-platform-svc/base/kustomization.yaml \
+              gitops/apps/devpath-platform-svc/base/kustomization.yaml
+            cp --no-preserve=mode,ownership,timestamps \
+              expected-gitops/apps/devpath-sandbox-svc/base/kustomization.yaml \
+              gitops/apps/devpath-sandbox-svc/base/kustomization.yaml
             mapfile -t changes < <(git -C gitops diff --name-only)
-            test "${#changes[@]}" -eq 1
+            test "${#changes[@]}" -eq 3
             test "${changes[0]}" = "apps/devpath-migration/base/kustomization.yaml"
+            test "${changes[1]}" = "apps/devpath-platform-svc/base/kustomization.yaml"
+            test "${changes[2]}" = "apps/devpath-sandbox-svc/base/kustomization.yaml"
             git -C gitops config user.name "devpath-gitops-release[bot]"
             git -C gitops config user.email \
               "devpath-gitops-release[bot]@users.noreply.github.com"
-            git -C gitops add apps/devpath-migration/base/kustomization.yaml
+            git -C gitops add \
+              apps/devpath-migration/base/kustomization.yaml \
+              apps/devpath-platform-svc/base/kustomization.yaml \
+              apps/devpath-sandbox-svc/base/kustomization.yaml
             git -C gitops diff --cached --check
             git -C gitops commit \
               -m "deploy(devpath-migration): $RELEASE_ID sealed $RELEASE_MANIFEST_SHA256"

@@ -32,12 +32,25 @@ WORKFLOW_REF = f"{REPOSITORY}/{WORKFLOW_PATH}@refs/heads/main"
 ENVIRONMENT_NAME = "mission-spine-migration-release"
 JOB_NAME = "deploy"
 MIGRATION_PATH = "apps/devpath-migration/base/kustomization.yaml"
+WRITER_SERVICE_NAMES = (
+    "devpath-platform-svc",
+    "devpath-sandbox-svc",
+)
+WRITER_PATHS = {
+    name: f"apps/{name}/base/kustomization.yaml" for name in WRITER_SERVICE_NAMES
+}
+MIGRATION_PATHS = tuple(sorted((MIGRATION_PATH, *WRITER_PATHS.values())))
 MIGRATION_JOB_PREFIX = "devpath-flyway-migrate-"
 MIGRATION_JOB_BASE_NAME = "devpath-flyway-migrate"
+REPLICA_OVERRIDE = re.compile(r"(?m)^replicas\s*:")
+KUBECTL_IMAGE = (
+    "registry.k8s.io/kubectl@sha256:"
+    "b0d792e0d8dfb9bb1b922b78b23137e2a34bb6f9667640353a9d2aadd1fd7761"
+)
 BOT_NAME = f"{GITOPS_WRITE_APP_SLUG}[bot]"
 RESULT_DOCUMENT_TYPE = "mission-spine-migration-result"
 RESULT_FILENAME = "evidence.json"
-RESULT_SCHEMA_VERSION = 1
+RESULT_SCHEMA_VERSION = 2
 MAX_API_DOCUMENT_BYTES = 262_144
 MAX_WORKFLOW_BYTES = 131_072
 MAX_EVIDENCE_BYTES = 16_384
@@ -433,6 +446,48 @@ def _migration_release_patch(
     )
 
 
+def _writer_fence_block(service_name: str) -> bytes:
+    if service_name not in WRITER_SERVICE_NAMES:
+        raise GateError("writer fence service is not allowlisted")
+    return (
+        "replicas:\n"
+        f"- name: {service_name}\n"
+        "  count: 0\n"
+    ).encode("utf-8")
+
+
+def render_writer_fence_kustomization(
+    kustomization_raw: bytes, service_name: str
+) -> bytes:
+    """Append the only permitted M-phase replica override."""
+    text = _validate_lf_text(
+        kustomization_raw,
+        f"{service_name} kustomization",
+        MAX_KUSTOMIZATION_BYTES,
+    )
+    if REPLICA_OVERRIDE.search(text) is not None:
+        raise GateError(f"{service_name} sealed base already contains a replica override")
+    rendered = kustomization_raw + _writer_fence_block(service_name)
+    validate_writer_fence_kustomization(rendered, service_name)
+    return rendered
+
+
+def validate_writer_fence_kustomization(
+    kustomization_raw: bytes, service_name: str
+) -> None:
+    text = _validate_lf_text(
+        kustomization_raw,
+        f"{service_name} writer fence",
+        MAX_KUSTOMIZATION_BYTES,
+    )
+    block = _writer_fence_block(service_name).decode("utf-8")
+    matches = list(REPLICA_OVERRIDE.finditer(text))
+    if len(matches) != 1 or not text.endswith(block):
+        raise GateError(f"{service_name} writer fence is not exact")
+    if REPLICA_OVERRIDE.search(text[: -len(block)]) is not None:
+        raise GateError(f"{service_name} writer fence is duplicated")
+
+
 def _migration_image_block(text: str) -> tuple[list[str], int, int, int]:
     lines = text.splitlines(keepends=True)
     matches = [
@@ -618,6 +673,38 @@ def validate_base_migration_job(
     ):
         raise GateError("sealed base migration Job is not canonically inert")
 
+    required_writer_fence_lines = (
+        "      serviceAccountName: devpath-migration-fence\n",
+        "      automountServiceAccountToken: false\n",
+        "        - name: wait-for-writer-deployments\n",
+        "        - name: wait-for-platform-pods\n",
+        "        - name: wait-for-sandbox-pods\n",
+        "            - --for=jsonpath={.spec.replicas}=0\n",
+        "            - deployment/devpath-platform-svc\n",
+        "            - deployment/devpath-sandbox-svc\n",
+        "            - --selector=app=devpath-platform-svc\n",
+        "            - --selector=app=devpath-sandbox-svc\n",
+        "              - serviceAccountToken:\n",
+        "                  expirationSeconds: 3600\n",
+    )
+    if any(text.count(line) != 1 for line in required_writer_fence_lines):
+        raise GateError("base migration Job writer-fence commands are not exact")
+    if text.count(f"          image: {KUBECTL_IMAGE}\n") != 3:
+        raise GateError("base migration Job must use the pinned kubectl image three times")
+    if text.count("            runAsUser: 65532\n") != 3 or text.count(
+        "            readOnlyRootFilesystem: true\n"
+    ) != 3:
+        raise GateError("base migration Job kubectl security contexts are not exact")
+    ordered_init_names = (
+        "wait-for-writer-deployments",
+        "wait-for-platform-pods",
+        "wait-for-sandbox-pods",
+        "sandbox-low-lock-preflight",
+    )
+    offsets = [text.index(f"        - name: {name}\n") for name in ordered_init_names]
+    if offsets != sorted(offsets):
+        raise GateError("base migration Job writer-fence init order is not exact")
+
     commit_env = re.findall(
         r'(?m)^\s*- name: EXPECTED_SHARED_COMMIT\n\s+value: "([0-9a-f]{40})"$',
         text,
@@ -691,6 +778,29 @@ def validate_migration_render(
     if re.search(r"(?m)^  suspend:\s*true\s*$", job) is not None:
         raise GateError("migration Job must not remain suspended")
     return job_name
+
+
+def validate_writer_fence_render(render_raw: bytes, service_name: str) -> None:
+    text = _validate_lf_text(
+        render_raw, f"{service_name} writer-fence render", MAX_RENDER_BYTES
+    )
+    if service_name not in WRITER_SERVICE_NAMES:
+        raise GateError("writer fence render service is not allowlisted")
+    documents = re.split(r"(?m)^---\s*$\n?", text)
+    deployments = [
+        document
+        for document in documents
+        if re.search(r"(?m)^kind:\s*Deployment\s*$", document) is not None
+    ]
+    if len(deployments) != 1:
+        raise GateError(f"{service_name} writer fence must render one Deployment")
+    deployment = deployments[0]
+    names = re.findall(r"(?m)^  name:\s*([^\s#]+)\s*$", deployment)
+    if names != [service_name]:
+        raise GateError(f"{service_name} writer fence Deployment name is not exact")
+    replicas = re.findall(r"(?m)^  replicas:\s*([0-9]+)\s*$", deployment)
+    if replicas != ["0"]:
+        raise GateError(f"{service_name} writer fence did not render replicas zero")
 
 
 def validate_base_migration_render(render_raw: bytes) -> None:
@@ -1165,9 +1275,9 @@ def validate_migration_facts(
         raise GateError("migration commit parent does not equal the sealed GitOps base")
     if tree_sha != expected_tree:
         raise GateError("migration commit tree does not equal the reconstructed tree")
-    if list(changed_paths) != [MIGRATION_PATH]:
+    if list(changed_paths) != list(MIGRATION_PATHS):
         raise GateError(
-            "migration commit must change exactly the sole kustomization path"
+            "migration commit must change exactly the migration and writer-fence paths"
         )
     expected_subject = f"deploy(devpath-migration): {release_id} sealed {release_sha}"
     if commit_subject != expected_subject:
@@ -1186,7 +1296,7 @@ def validate_migration_facts(
         "migration_commit_sha": migration_sha,
         "migration_tree_sha": tree_sha,
         "publish_mode": publish_mode,
-        "sole_changed_path": MIGRATION_PATH,
+        "changed_paths": list(MIGRATION_PATHS),
         "commit_subject": expected_subject,
         "commit_author_name": BOT_NAME,
         "commit_committer_name": BOT_NAME,
@@ -1238,9 +1348,9 @@ def validate_pre_reconstruction_source_facts(
         raise GateError(
             "current GitOps main must be the exact one-parent child of the base"
         )
-    if list(changed_paths) != [MIGRATION_PATH]:
+    if list(changed_paths) != list(MIGRATION_PATHS):
         raise GateError(
-            "pre-existing migration child must change only the migration path"
+            "pre-existing migration child must change only the exact migration paths"
         )
     expected_subject = f"deploy(devpath-migration): {release_id} sealed {release_sha}"
     if commit_subject != expected_subject:
@@ -1269,7 +1379,7 @@ def build_result_evidence(
     gitops_write_app_slug: str,
     gitops_write_app_id: str,
     gitops_write_app_installation_id: str,
-    sole_changed_path: str,
+    changed_paths: Sequence[str],
     rendered_job_name: str,
     commit_subject: str,
     commit_author_name: str,
@@ -1332,8 +1442,8 @@ def build_result_evidence(
     installation_id = _positive_integer_string(
         gitops_write_app_installation_id, "GitOps App installation id"
     )
-    if sole_changed_path != MIGRATION_PATH:
-        raise GateError("migration sole changed path is not exact")
+    if list(changed_paths) != list(MIGRATION_PATHS):
+        raise GateError("migration changed paths are not exact")
     digest = _nonzero(DIGEST, image_digest, "migration image digest")
     expected_job_name = derived_migration_job_name(digest, release_sha)
     if rendered_job_name != expected_job_name:
@@ -1375,7 +1485,7 @@ def build_result_evidence(
             "write_app_id": app_id,
             "write_app_installation_id": installation_id,
             "branch": GITOPS_BRANCH,
-            "sole_changed_path": MIGRATION_PATH,
+            "changed_paths": list(MIGRATION_PATHS),
             "rendered_job_name": expected_job_name,
             "commit_subject": expected_subject,
             "commit_author_name": BOT_NAME,
@@ -1494,7 +1604,7 @@ def validate_result_evidence(raw: bytes) -> dict[str, object]:
             "write_app_id",
             "write_app_installation_id",
             "branch",
-            "sole_changed_path",
+            "changed_paths",
             "rendered_job_name",
             "commit_subject",
             "commit_author_name",
@@ -1506,7 +1616,7 @@ def validate_result_evidence(raw: bytes) -> dict[str, object]:
         "repository": GITOPS_REPOSITORY,
         "write_app_slug": GITOPS_WRITE_APP_SLUG,
         "branch": GITOPS_BRANCH,
-        "sole_changed_path": MIGRATION_PATH,
+        "changed_paths": list(MIGRATION_PATHS),
         "commit_author_name": BOT_NAME,
         "commit_committer_name": BOT_NAME,
     }
@@ -1622,6 +1732,34 @@ def write_migration_kustomization(
         release_manifest_sha256,
     )
     return derived_migration_job_name(image_digest, release_manifest_sha256)
+
+
+def write_writer_fence_kustomization(path: Path, service_name: str) -> None:
+    raw = _read_regular_file(
+        path, f"{service_name} kustomization", MAX_KUSTOMIZATION_BYTES
+    )
+    result = render_writer_fence_kustomization(raw, service_name)
+    temporary = path.with_name(f".{path.name}.mission-spine-writer-fence.tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise GateError("writer fence kustomization temporary path is occupied")
+    try:
+        with temporary.open("xb") as output:
+            output.write(result)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise GateError("could not atomically set the writer fence") from exc
+    validate_writer_fence_kustomization(
+        _read_regular_file(
+            path, f"{service_name} writer fence", MAX_KUSTOMIZATION_BYTES
+        ),
+        service_name,
+    )
 
 
 def _git(root: Path, *args: str) -> str:
@@ -1804,6 +1942,18 @@ def _parser() -> argparse.ArgumentParser:
     set_migration.add_argument("--release-manifest-sha256", required=True)
     set_migration.add_argument("--github-output", type=Path, required=True)
 
+    set_writer_fence = subparsers.add_parser("set-writer-fence")
+    set_writer_fence.add_argument("--kustomization", type=Path, required=True)
+    set_writer_fence.add_argument(
+        "--service", choices=WRITER_SERVICE_NAMES, required=True
+    )
+
+    writer_render = subparsers.add_parser("validate-writer-fence-render")
+    writer_render.add_argument("--render", type=Path, required=True)
+    writer_render.add_argument(
+        "--service", choices=WRITER_SERVICE_NAMES, required=True
+    )
+
     render = subparsers.add_parser("validate-migration-render")
     render.add_argument("--render", type=Path, required=True)
     render.add_argument("--image-digest", required=True)
@@ -1940,6 +2090,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             _write_outputs(args.github_output, {"rendered_job_name": job_name})
             print("set exact multi-release digest/name/unsuspend migration bytes")
+        elif args.command == "set-writer-fence":
+            write_writer_fence_kustomization(args.kustomization, args.service)
+            print(f"set exact replicas-zero writer fence for {args.service}")
+        elif args.command == "validate-writer-fence-render":
+            validate_writer_fence_render(
+                _read_regular_file(
+                    args.render, f"{args.service} writer-fence render", MAX_RENDER_BYTES
+                ),
+                args.service,
+            )
+            print(f"verified exact replicas-zero writer render for {args.service}")
         elif args.command == "validate-migration-render":
             job_name = validate_migration_render(
                 _read_regular_file(
@@ -2038,7 +2199,7 @@ def main(argv: list[str] | None = None) -> int:
                 gitops_write_app_slug=args.app_slug,
                 gitops_write_app_id=args.app_id,
                 gitops_write_app_installation_id=args.installation_id,
-                sole_changed_path=str(facts["sole_changed_path"]),
+                changed_paths=list(facts["changed_paths"]),
                 rendered_job_name=rendered_job_name,
                 commit_subject=str(facts["commit_subject"]),
                 commit_author_name=str(facts["commit_author_name"]),

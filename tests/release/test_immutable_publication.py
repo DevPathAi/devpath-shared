@@ -371,6 +371,19 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("validate-base-migration-job", self.migration)
         self.assertIn('--source-sha "$SOURCE_SHA"', self.migration)
         self.assertIn("set-migration-release", self.migration)
+        self.assertEqual(2, self.migration.count("set-writer-fence"))
+        self.assertEqual(2, self.migration.count("validate-writer-fence-render"))
+        self.assertIn(
+            'test "${#changes[@]}" -eq 3',
+            self.migration,
+        )
+        for path in (
+            "apps/devpath-migration/base/kustomization.yaml",
+            "apps/devpath-platform-svc/base/kustomization.yaml",
+            "apps/devpath-sandbox-svc/base/kustomization.yaml",
+        ):
+            self.assertIn(path, self.migration)
+        self.assertNotIn("Reconstruct the one-file migration tree", self.migration)
         self.assertNotIn('"$KUSTOMIZE_BIN" edit set image', self.migration)
         self.assertNotIn("! grep -F 'patches:'", self.migration)
         self.assertIn("verify-pre-reconstruction-source", self.migration)
