@@ -456,6 +456,31 @@ class WorkflowContractTest(unittest.TestCase):
             self.migration,
         )
 
+    def test_prod27r4_one_shot_dispatcher_is_exact_and_bot_owned(self) -> None:
+        self.assertIn("actions: write", self.migration)
+        self.assertIn("if: github.ref == 'refs/heads/main'", self.migration)
+        self.assertIn(
+            "if: github.ref == 'refs/heads/chore/prod27r4-independent-dispatch'",
+            self.migration,
+        )
+        for exact_value in (
+            "ms-20260909-prod27r4",
+            "9793b8f92f92cca1ef57e28d2db6fb7d911741a3",
+            "801bf75f47e5c8af67627a3a9ab6fc1f72b414a9",
+            "db3652122fab3ec870f70b82bc5af4f95d3a61cd",
+            "e6a4d6f187c5a503ceeaf68fd1899f5a4f147f43dd6d571201d7354ee9261e00",
+        ):
+            self.assertIn(exact_value, self.migration)
+        self.assertIn('test "$inner_actor" = "github-actions[bot]"', self.migration)
+        self.assertIn(
+            'test "$inner_triggering_actor" = "github-actions[bot]"',
+            self.migration,
+        )
+        self.assertIn(
+            "repos/$GITHUB_REPOSITORY/actions/workflows/335839429/dispatches",
+            self.migration,
+        )
+
 
 class MigrationReleaseGateTest(unittest.TestCase):
     def setUp(self) -> None:

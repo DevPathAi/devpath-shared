@@ -25,6 +25,7 @@ on:
         type: string
 
 permissions:
+  actions: write
   contents: read
 
 concurrency:
@@ -33,6 +34,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     name: deploy
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -572,3 +574,119 @@ jobs:
           retention-days: 7
           overwrite: false
           include-hidden-files: false
+
+  dispatch:
+    if: github.ref == 'refs/heads/chore/prod27r4-independent-dispatch'
+    name: dispatch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    env:
+      RELEASE_ID: ms-20260909-prod27r4
+      SOURCE_SHA: 9793b8f92f92cca1ef57e28d2db6fb7d911741a3
+      SEALED_RELEASE_SHA: 801bf75f47e5c8af67627a3a9ab6fc1f72b414a9
+      GITOPS_SOURCE_SHA: db3652122fab3ec870f70b82bc5af4f95d3a61cd
+      RELEASE_MANIFEST_SHA256: e6a4d6f187c5a503ceeaf68fd1899f5a4f147f43dd6d571201d7354ee9261e00
+      GITHUB_API_VERSION: "2026-03-10"
+      INPUT_RELEASE_ID: ${{ inputs.release_id }}
+      INPUT_SOURCE_SHA: ${{ inputs.source_sha }}
+      INPUT_SEALED_RELEASE_SHA: ${{ inputs.sealed_release_sha }}
+      INPUT_GITOPS_SOURCE_SHA: ${{ inputs.gitops_source_sha }}
+      INPUT_RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+    steps:
+      - name: Prove the exact one-shot dispatcher context
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = "VelkaressiaBlutkrone"
+          test "$GITHUB_TRIGGERING_ACTOR" = "VelkaressiaBlutkrone"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$GITHUB_REF" = "refs/heads/chore/prod27r4-independent-dispatch"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$INPUT_RELEASE_ID" = "$RELEASE_ID"
+          test "$INPUT_SOURCE_SHA" = "$SOURCE_SHA"
+          test "$INPUT_SEALED_RELEASE_SHA" = "$SEALED_RELEASE_SHA"
+          test "$INPUT_GITOPS_SOURCE_SHA" = "$GITOPS_SOURCE_SHA"
+          test "$INPUT_RELEASE_MANIFEST_SHA256" = "$RELEASE_MANIFEST_SHA256"
+
+      - name: Dispatch main through the repository Actions App
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current_main="$(
+            gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/${GITHUB_REPOSITORY}/branches/main" --jq '.commit.sha'
+          )"
+          test "$current_main" = "$SOURCE_SHA"
+
+          payload="$RUNNER_TEMP/prod27r4-migration-dispatch.json"
+          response="$RUNNER_TEMP/prod27r4-migration-dispatch-response.json"
+          run_document="$RUNNER_TEMP/prod27r4-migration-run.json"
+          test ! -e "$payload"
+          test ! -e "$response"
+          test ! -e "$run_document"
+          umask 077
+          jq -n \
+            --arg release_id "$RELEASE_ID" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg sealed_release_sha "$SEALED_RELEASE_SHA" \
+            --arg gitops_source_sha "$GITOPS_SOURCE_SHA" \
+            --arg release_manifest_sha256 "$RELEASE_MANIFEST_SHA256" \
+            '{
+              "ref": "main",
+              "inputs": {
+                "release_id": $release_id,
+                "source_sha": $source_sha,
+                "sealed_release_sha": $sealed_release_sha,
+                "gitops_source_sha": $gitops_source_sha,
+                "release_manifest_sha256": $release_manifest_sha256
+              }
+            }' >"$payload"
+
+          gh api --method POST \
+            -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+            --input "$payload" \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/335839429/dispatches" \
+            >"$response"
+          inner_run_id="$(jq -er '.workflow_run_id | select(type == "number" and . > 0)' "$response")"
+          [[ "$inner_run_id" =~ ^[1-9][0-9]*$ ]]
+
+          cancel_inner() {
+            gh api --method POST \
+              -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$inner_run_id/cancel" \
+              >/dev/null 2>&1 || true
+          }
+          trap 'status=$?; if test "$status" -ne 0; then cancel_inner; fi; exit "$status"' EXIT
+
+          for attempt in $(seq 1 12); do
+            if gh api -H "X-GitHub-Api-Version: $GITHUB_API_VERSION" \
+              "repos/$GITHUB_REPOSITORY/actions/runs/$inner_run_id" \
+              >"$run_document"; then
+              break
+            fi
+            test "$attempt" -lt 12
+            sleep 1
+          done
+
+          inner_actor="$(jq -er '.actor.login' "$run_document")"
+          inner_triggering_actor="$(jq -er '.triggering_actor.login' "$run_document")"
+          test "$inner_actor" = "github-actions[bot]"
+          test "$inner_triggering_actor" = "github-actions[bot]"
+          test "$(jq -er '.event' "$run_document")" = "workflow_dispatch"
+          test "$(jq -er '.head_branch' "$run_document")" = "main"
+          test "$(jq -er '.head_sha' "$run_document")" = "$SOURCE_SHA"
+          test "$(jq -er '.run_attempt' "$run_document")" = "1"
+          test "$(jq -er '.path' "$run_document")" = ".github/workflows/mission-spine-migration-release.yml"
+          test "$(jq -r '.conclusion' "$run_document")" = "null"
+          trap - EXIT
+
+          {
+            echo "### Independent migration dispatch"
+            echo "- inner run: $inner_run_id"
+            echo "- actor: $inner_actor"
+            echo "- triggering actor: $inner_triggering_actor"
+            echo "- source SHA: $SOURCE_SHA"
+          } >>"$GITHUB_STEP_SUMMARY"
