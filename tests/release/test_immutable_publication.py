@@ -456,6 +456,32 @@ class WorkflowContractTest(unittest.TestCase):
             self.migration,
         )
 
+    def test_github_login_one_shot_dispatcher_is_exact_and_bot_owned(self) -> None:
+        self.assertIn("actions: write", self.migration)
+        self.assertIn("if: github.ref == 'refs/heads/main'", self.migration)
+        self.assertIn(
+            "if: github.ref == "
+            "'refs/heads/chore/ms-20260915-github-login-independent-dispatch'",
+            self.migration,
+        )
+        for exact_value in (
+            "ms-20260915-github-login",
+            "9793b8f92f92cca1ef57e28d2db6fb7d911741a3",
+            "7e7775446833e535017e2b35f9e508f62223afb4",
+            "6c16aadea28a0818854ac761d11c019415572096",
+            "ff84a63c2d5f19a4f6e98b5e59663dffe5dd438b3318a3847745fd405d64d1a7",
+        ):
+            self.assertIn(exact_value, self.migration)
+        self.assertIn('test "$inner_actor" = "github-actions[bot]"', self.migration)
+        self.assertIn(
+            'test "$inner_triggering_actor" = "github-actions[bot]"',
+            self.migration,
+        )
+        self.assertIn(
+            "repos/$GITHUB_REPOSITORY/actions/workflows/335839429/dispatches",
+            self.migration,
+        )
+
 
 class MigrationReleaseGateTest(unittest.TestCase):
     def setUp(self) -> None:
