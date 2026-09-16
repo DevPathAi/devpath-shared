@@ -1,0 +1,37 @@
+---
+name: Mission Spine Release Gate Dispatch
+
+'on':
+  push:
+    branches:
+      - automation/dispatch-ms-20260916-community-ia
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch protected migration release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch migration as GitHub Actions automation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/mission-spine-migration-release.yml/dispatches" \
+            --input - <<'JSON'
+          {
+            "ref": "main",
+            "inputs": {
+              "release_id": "ms-20260916-community-ia",
+              "source_sha": "9793b8f92f92cca1ef57e28d2db6fb7d911741a3",
+              "sealed_release_sha": "975f10c98ecb7a9adcc7c8bc59501b459985afbd",
+              "gitops_source_sha": "5609bb091c4f65c061553d3addba3fba6561a0f8",
+              "release_manifest_sha256": "3c8cd265494f93348a9a8809087522d0e21657f07b4b46fec52522503037b63d"
+            }
+          }
+          JSON
