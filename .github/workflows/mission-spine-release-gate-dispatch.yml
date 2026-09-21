@@ -1,0 +1,37 @@
+---
+name: Mission Spine Release Gate Dispatch
+
+'on':
+  push:
+    branches:
+      - automation/dispatch-ms-20260920-community-flat-pages-r3
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch protected migration release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch migration as GitHub Actions automation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/mission-spine-migration-release.yml/dispatches" \
+            --input - <<'JSON'
+          {
+            "ref": "main",
+            "inputs": {
+              "release_id": "ms-20260920-community-flat-pages-r3",
+              "source_sha": "9793b8f92f92cca1ef57e28d2db6fb7d911741a3",
+              "sealed_release_sha": "fe45981814cae3a95554f857c85319ad08cc22d3",
+              "gitops_source_sha": "fcf97cf686df8e8bad56597d4679f9a96fd597fc",
+              "release_manifest_sha256": "6db1109cf9bd7e732b5805b1542d765e1a735f1f26d01a0b6326d5bb91f90d81"
+            }
+          }
+          JSON
