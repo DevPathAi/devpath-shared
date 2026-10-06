@@ -1,0 +1,37 @@
+---
+name: Mission Spine Release Gate Dispatch
+
+'on':
+  push:
+    branches:
+      - automation/dispatch-ms-20261003-ai-fallback-retry-budget
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch protected migration release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch migration as GitHub Actions automation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/mission-spine-migration-release.yml/dispatches" \
+            --input - <<'JSON'
+          {
+            "ref": "main",
+            "inputs": {
+              "release_id": "ms-20261003-ai-fallback-retry-budget",
+              "source_sha": "9793b8f92f92cca1ef57e28d2db6fb7d911741a3",
+              "sealed_release_sha": "c8ee341d395539544ec62abad21efb406555c1d9",
+              "gitops_source_sha": "a97a175466962e33ca1823edbb6656091700db81",
+              "release_manifest_sha256": "dd8e9626eec6dff3db5fba14cbfc2aa721726b7c7e4f3057a8ad3d656a01c284"
+            }
+          }
+          JSON
