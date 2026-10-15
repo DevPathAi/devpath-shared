@@ -49,7 +49,7 @@ dependencies {
 	// 스토리지 테스트: 실 s3 클라이언트 + MinIO Testcontainers + 자동설정 검증.
 	testImplementation(platform("software.amazon.awssdk:bom:2.28.0"))
 	testImplementation("software.amazon.awssdk:s3")
-	testImplementation(platform("org.testcontainers:testcontainers-bom:1.20.4"))
+	testImplementation(platform("org.testcontainers:testcontainers-bom:1.21.4"))
 	testImplementation("org.testcontainers:minio")
 	testImplementation("org.testcontainers:junit-jupiter")
 	testImplementation("org.springframework.boot:spring-boot-autoconfigure:4.0.7")

@@ -9,6 +9,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
+import org.testcontainers.DockerClientFactory;
 import org.testcontainers.containers.MinIOContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -19,9 +21,18 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3Configuration;
 
-/** 도커 미가용 환경(로컬)에서는 자동 스킵(disabledWithoutDocker). 도커/CI에서 왕복 검증. */
-@Testcontainers(disabledWithoutDocker = true)
+/**
+ * 도커 미가용 로컬에서는 스킵한다. CI(환경변수 CI 존재)에서는 스킵하지 않는다 — 도커를 못 쓰면
+ * 컨테이너 기동이 실패해 빌드가 빨갛게 된다. Testcontainers 1.20.4 가 Docker 29 를 「도커 없음」으로
+ * 판정해 IT 가 조용히 빠졌던 구멍(2026-10)을 CI 에서 다시 놓치지 않기 위해서다.
+ */
+@Testcontainers
+@EnabledIf("dockerAvailableOrCi")
 class S3ObjectStorageIT {
+
+  static boolean dockerAvailableOrCi() {
+    return System.getenv("CI") != null || DockerClientFactory.instance().isDockerAvailable();
+  }
 
   // Docker Hub 의 minio/minio 저장소가 사라졌다(2026-10 확인, pull 404). 같은 계열 커뮤니티 포크
   // pgsty/minio:RELEASE.2026-08-04T00-00-00Z 를 digest 로 고정한다.
