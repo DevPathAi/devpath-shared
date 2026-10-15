@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MinIOContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
 import software.amazon.awssdk.regions.Region;
@@ -22,9 +23,14 @@ import software.amazon.awssdk.services.s3.S3Configuration;
 @Testcontainers(disabledWithoutDocker = true)
 class S3ObjectStorageIT {
 
+  // Docker Hub 의 minio/minio 저장소가 사라졌다(2026-10 확인, pull 404). 같은 계열 커뮤니티 포크
+  // pgsty/minio:RELEASE.2026-08-04T00-00-00Z 를 digest 로 고정한다.
   @Container
   static final MinIOContainer MINIO =
-      new MinIOContainer("minio/minio:RELEASE.2024-10-13T13-34-11Z");
+      new MinIOContainer(
+          DockerImageName.parse(
+                  "pgsty/minio@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372")
+              .asCompatibleSubstituteFor("minio/minio"));
 
   private S3ObjectStorage storage() {
     StorageProperties props = new StorageProperties();
